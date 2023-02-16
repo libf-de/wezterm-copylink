@@ -768,7 +768,7 @@ cargo build --all --release""",
             steps += [
                 RunStep(
                     "Workaround git permissions issue",
-                    "git config --global --add safe.directory /__w/wezterm/wezterm",
+                    "git config --global --add safe.directory /__w/wezterm-copylink/wezterm-copylink",
                 )
             ]
         steps += [CheckoutStep(submodules=submodules)]

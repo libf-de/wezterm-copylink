@@ -45,7 +45,7 @@ jobs:
         run: "apk add openssh"
       - name: "Workaround git permissions issue"
         shell: bash
-        run: "git config --global --add safe.directory /__w/wezterm/wezterm"
+        run: "git config --global --add safe.directory /__w/wezterm-copylink/wezterm-copylink"
       - name: "checkout repo"
         uses: actions/checkout@v3
         with:
