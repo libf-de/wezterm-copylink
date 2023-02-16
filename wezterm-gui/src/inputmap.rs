@@ -163,6 +163,20 @@ impl InputMap {
                     },
                     MouseEventTrigger::Up {
                         streak: 1,
+                        button: MouseButton::Right
+                    },
+                    CopyLinkAtMouseCursor(
+                        ClipboardCopyDestination::ClipboardAndPrimarySelection
+                    )
+                ],
+                [
+                    MouseEventTriggerMods {
+                        mods: Modifiers::NONE,
+                        mouse_reporting: false,
+                        alt_screen: MouseEventAltScreen::Any,
+                    },
+                    MouseEventTrigger::Up {
+                        streak: 1,
                         button: MouseButton::Left
                     },
                     CompleteSelectionOrOpenLinkAtMouseCursor(

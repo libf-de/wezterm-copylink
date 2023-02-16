@@ -2525,6 +2525,16 @@ impl TermWindow {
                     self.do_open_link_at_mouse_cursor(pane);
                 }
             }
+            CopyLinkAtMouseCursor(dest) => {
+                let possible_link: Option<Arc<Hyperlink>> = self.current_highlight.as_ref().cloned();
+                if possible_link.is_some() {
+                    self.copy_to_clipboard(
+                        *dest, 
+                        possible_link.expect("link is none :(").uri().to_string()
+                    );
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            }
             CompleteSelection(dest) => {
                 let text = self.selection_text(pane);
                 if !text.is_empty() {

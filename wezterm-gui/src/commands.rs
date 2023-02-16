@@ -1657,6 +1657,20 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: None,
         },
+        CopyLinkAtMouseCursor(destination) => CommandDef {
+            brief: format!(
+                "Copies a URL to {destination:?}"
+            )
+            .into(),
+            doc: format!(
+                "If the mouse is over a link, copy it to {destination:?}"
+            )
+            .into(),
+            keys: vec![],
+            args: &[],
+            menubar: &[],
+            icon: None,
+        },
         StartWindowDrag => CommandDef {
             brief: "Requests a window drag operation from \
                 the window environment"
