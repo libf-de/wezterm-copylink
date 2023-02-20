@@ -194,10 +194,10 @@ EOF
         rm -rf pkg
         mkdir -p pkg/debian/usr/bin pkg/debian/DEBIAN pkg/debian/usr/share/{applications,wezterm}
         cat > pkg/debian/control <<EOF
-Package: wezterm
+Package: wezterm-copylink
 Version: ${TAG_NAME#nightly-}
 Architecture: $(dpkg-architecture -q DEB_BUILD_ARCH_CPU)
-Maintainer: Wez Furlong <wez@wezfurlong.org>
+Maintainer: Fabian Schillig <xorgmc@gmail.com>
 Section: utils
 Priority: optional
 Homepage: https://wezfurlong.org/wezterm/
@@ -205,8 +205,10 @@ Description: Wez's Terminal Emulator.
  wezterm is a terminal emulator with support for modern features
  such as fonts with ligatures, hyperlinks, tabs and multiple
  windows.
+ With bodged "right-click-on-links-to-copy"-support!
+Conflicts: wezterm
 Provides: x-terminal-emulator
-Source: https://wezfurlong.org/wezterm/
+Source: https://github.com/libf-de/wezterm-copylink
 EOF
 
         cat > pkg/debian/postinst <<EOF
