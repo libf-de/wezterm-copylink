@@ -1658,14 +1658,8 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             icon: None,
         },
         CopyLinkAtMouseCursor(destination) => CommandDef {
-            brief: format!(
-                "Copies a URL to {destination:?}"
-            )
-            .into(),
-            doc: format!(
-                "If the mouse is over a link, copy it to {destination:?}"
-            )
-            .into(),
+            brief: format!("Copies a URL to {destination:?}").into(),
+            doc: format!("If the mouse is over a link, copy it to {destination:?}").into(),
             keys: vec![],
             args: &[],
             menubar: &[],

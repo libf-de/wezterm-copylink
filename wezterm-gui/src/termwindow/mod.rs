@@ -2526,11 +2526,12 @@ impl TermWindow {
                 }
             }
             CopyLinkAtMouseCursor(dest) => {
-                let possible_link: Option<Arc<Hyperlink>> = self.current_highlight.as_ref().cloned();
+                let possible_link: Option<Arc<Hyperlink>> =
+                    self.current_highlight.as_ref().cloned();
                 if possible_link.is_some() {
                     self.copy_to_clipboard(
                         *dest, 
-                        possible_link.expect("link is none :(").uri().to_string()
+                        possible_link.expect("link is none :(").uri().to_string(),
                     );
                     std::thread::sleep(Duration::from_millis(200));
                 }

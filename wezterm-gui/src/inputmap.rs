@@ -165,9 +165,7 @@ impl InputMap {
                         streak: 1,
                         button: MouseButton::Right
                     },
-                    CopyLinkAtMouseCursor(
-                        ClipboardCopyDestination::ClipboardAndPrimarySelection
-                    )
+                    CopyLinkAtMouseCursor(ClipboardCopyDestination::ClipboardAndPrimarySelection)
                 ],
                 [
                     MouseEventTriggerMods {
