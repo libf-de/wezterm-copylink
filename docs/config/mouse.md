@@ -1,3 +1,8 @@
+---
+tags:
+  - mouse
+---
+
 Mouse bindings are configurable, and there are a number of default assignments
 described below.
 
@@ -28,7 +33,11 @@ of that triple click, so for a triple click both
 `SelectTextAtMouseCursor="Line"` and `CompleteSelection` will be triggered in
 that order.
 
-NOTE: In the action column, `act` is an alias to `wezterm.action` (to avoid repetition).
+NOTE: In the action column, `act` is an alias to `wezterm.action` (to avoid repetition):
+
+```lua
+local act = wezterm.action
+```
 
 | Event | Modifiers | Action |
 | --------- | --- | ------ |
@@ -36,16 +45,16 @@ NOTE: In the action column, `act` is an alias to `wezterm.action` (to avoid repe
 | Double Left Down | `NONE`   | `act.SelectTextAtMouseCursor("Word")`  |
 | Single Left Down | `NONE`   | `act.SelectTextAtMouseCursor("Cell")`  |
 | Single Left Down | `SHIFT`   | `act.ExtendSelectionToMouseCursor("Cell")`  |
-| Single Left Down | `ALT`   | `act.SelectTextAtMouseCursor("Block")`  (*since: 20220624-141144-bd1b7c5d*) |
+| Single Left Down | `ALT`   | `act.SelectTextAtMouseCursor("Block")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
 | Single Left Up | `SHIFT`   | `act.CompleteSelectionOrOpenLinkAtMouseCursor("ClipboardAndPrimarySelection")`  |
 | Single Left Up | `NONE`   | `act.CompleteSelectionOrOpenLinkAtMouseCursor("ClipboardAndPrimarySelection")`  |
-| Single Left Up | `ALT`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  (*since: 20220624-141144-bd1b7c5d*) |
+| Single Left Up | `ALT`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
 | Double Left Up | `NONE`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  |
 | Triple Left Up | `NONE`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  |
 | Single Left Drag | `NONE`   | `act.ExtendSelectionToMouseCursor("Cell")`  |
-| Single Left Drag | `ALT`   | `act.ExtendSelectionToMouseCursor("Block")` (*since: 20220624-141144-bd1b7c5d*) |
-| Single Left Down | `ALT+SHIFT`   | `act.ExtendSelectionToMouseCursor("Block")`  (*since: 20220624-141144-bd1b7c5d*) |
-| Single Left Up | `ALT+SHIFT`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  (*since: 20220624-141144-bd1b7c5d*) |
+| Single Left Drag | `ALT`   | `act.ExtendSelectionToMouseCursor("Block")` {{since('20220624-141144-bd1b7c5d', inline=True)}} |
+| Single Left Down | `ALT+SHIFT`   | `act.ExtendSelectionToMouseCursor("Block")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
+| Single Left Up | `ALT+SHIFT`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
 | Double Left Drag | `NONE`   | `act.ExtendSelectionToMouseCursor("Word")`  |
 | Triple Left Drag | `NONE`   | `act.ExtendSelectionToMouseCursor("Line")`  |
 | Single Middle Down | `NONE`   | `act.PasteFrom("PrimarySelection")`  |
@@ -57,48 +66,47 @@ disable all of them with this configuration; if you chose to do this,
 you must explicitly register every binding.
 
 ```lua
-return {
-  disable_default_mouse_bindings = true,
-}
+config.disable_default_mouse_bindings = true
 ```
 
 ## Configuring Mouse Assignments
 
-*since: 20200607-144723-74889cd4*
+{{since('20200607-144723-74889cd4')}}
 
 You can define mouse actions using the `mouse_bindings` configuration section:
 
 ```lua
 local wezterm = require 'wezterm'
 local act = wezterm.action
+local config = {}
 
-return {
-  mouse_bindings = {
-    -- Right click sends "woot" to the terminal
-    {
-      event = { Down = { streak = 1, button = 'Right' } },
-      mods = 'NONE',
-      action = act.SendString 'woot',
-    },
-
-    -- Change the default click behavior so that it only selects
-    -- text and doesn't open hyperlinks
-    {
-      event = { Up = { streak = 1, button = 'Left' } },
-      mods = 'NONE',
-      action = act.CompleteSelection 'ClipboardAndPrimarySelection',
-    },
-
-    -- and make CTRL-Click open hyperlinks
-    {
-      event = { Up = { streak = 1, button = 'Left' } },
-      mods = 'CTRL',
-      action = act.OpenLinkAtMouseCursor,
-    },
-    -- NOTE that binding only the 'Up' event can give unexpected behaviors.
-    -- Read more below on the gotcha of binding an 'Up' event only.
+config.mouse_bindings = {
+  -- Right click sends "woot" to the terminal
+  {
+    event = { Down = { streak = 1, button = 'Right' } },
+    mods = 'NONE',
+    action = act.SendString 'woot',
   },
+
+  -- Change the default click behavior so that it only selects
+  -- text and doesn't open hyperlinks
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'NONE',
+    action = act.CompleteSelection 'ClipboardAndPrimarySelection',
+  },
+
+  -- and make CTRL-Click open hyperlinks
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    action = act.OpenLinkAtMouseCursor,
+  },
+  -- NOTE that binding only the 'Up' event can give unexpected behaviors.
+  -- Read more below on the gotcha of binding an 'Up' event only.
 }
+
+return config
 ```
 
 Each entry in the mouse binding table can have the following fields:
@@ -115,14 +123,14 @@ Each entry in the mouse binding table can have the following fields:
    pane from receiving that mouse event.  You can, of course, define these and
    still send your mouse event to the pane by holding down the configured
    [mouse reporting bypass modifier
-   key](lua/config/bypass_mouse_reporting_modifiers.md). (*Since: 20220807-113146-c2fee766*)
+   key](lua/config/bypass_mouse_reporting_modifiers.md). {{since('20220807-113146-c2fee766', inline=True)}}
 * `alt_screen` - an optional field that defaults to `'Any'`, but that can also
   be set to either `true` or `false`. This mouse binding entry will only be
   considered if the current pane's alt screen state matches this field.  Most
   of the default mouse assignments are defined as `alt_screen='Any'`, a notable
   exception being that mouse wheel scrolling only applies when
   `alt_screen=false`, as the mouse wheel is typically mapped to arrow keys by
-  the terminal in alt screen mode. (*Since: 20220807-113146-c2fee766*).
+  the terminal in alt screen mode. {{since('20220807-113146-c2fee766', inline=True)}}.
 
 The `action` and `mods` portions are described in more detail in the key assignment
 information below.
@@ -149,7 +157,7 @@ you wanted quadruple-click bindings you can specify `streak=4`.
 | Double Left Up  | `event={Up={streak=2, button="Left"}}` |
 | Single Left Drag  | `event={Drag={streak=1, button="Left"}}` |
 
-*since: 20220807-113146-c2fee766*
+{{since('20220807-113146-c2fee766')}}
 
 You can handle vertical wheel scroll events using the example shown below. The
 `streak` and amount associated with either `WheelUp` or `WheelDown` are set to
@@ -160,24 +168,25 @@ delta scroll value while handling the event.
 ```lua
 local wezterm = require 'wezterm'
 local act = wezterm.action
+local config = {}
 
-return {
-  mouse_bindings = {
-    -- Scrolling up while holding CTRL increases the font size
-    {
-      event = { Down = { streak = 1, button = { WheelUp = 1 } } },
-      mods = 'CTRL',
-      action = act.IncreaseFontSize,
-    },
+config.mouse_bindings = {
+  -- Scrolling up while holding CTRL increases the font size
+  {
+    event = { Down = { streak = 1, button = { WheelUp = 1 } } },
+    mods = 'CTRL',
+    action = act.IncreaseFontSize,
+  },
 
-    -- Scrolling down while holding CTRL decreases the font size
-    {
-      event = { Down = { streak = 1, button = { WheelDown = 1 } } },
-      mods = 'CTRL',
-      action = act.DecreaseFontSize,
-    },
+  -- Scrolling down while holding CTRL decreases the font size
+  {
+    event = { Down = { streak = 1, button = { WheelDown = 1 } } },
+    mods = 'CTRL',
+    action = act.DecreaseFontSize,
   },
 }
+
+return config
 ```
 
 
@@ -194,23 +203,23 @@ be sent to the running program), for example:
 ```lua
 local wezterm = require 'wezterm'
 local act = wezterm.action
+local config = {}
 
-return {
-  mouse_bindings = {
-    -- Bind 'Up' event of CTRL-Click to open hyperlinks
-    {
-      event = { Up = { streak = 1, button = 'Left' } },
-      mods = 'CTRL',
-      action = act.OpenLinkAtMouseCursor,
-    },
-    -- Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
-    {
-      event = { Down = { streak = 1, button = 'Left' } },
-      mods = 'CTRL',
-      action = act.Nop,
-    },
+config.mouse_bindings = {
+  -- Bind 'Up' event of CTRL-Click to open hyperlinks
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    action = act.OpenLinkAtMouseCursor,
+  },
+  -- Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
+  {
+    event = { Down = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    action = act.Nop,
   },
 }
+return config
 ```
 
 

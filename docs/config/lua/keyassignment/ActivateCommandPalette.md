@@ -1,17 +1,15 @@
-# ActivateCommandPalette
+# `ActivateCommandPalette`
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 Activates the Command Palette, a modal overlay that enables discovery and activation of various commands.
 
 ```lua
-return {
-  keys = {
-    {
-      key = 'P',
-      mods = 'CTRL',
-      action = wezterm.action.ActivateCommandPalette,
-    },
+config.keys = {
+  {
+    key = 'P',
+    mods = 'CTRL',
+    action = wezterm.action.ActivateCommandPalette,
   },
 }
 ```
@@ -22,7 +20,7 @@ The command palette shows a list of possible actions ranked by
 [frecency](https://en.wikipedia.org/wiki/Frecency) of use from the command
 palette.
 
-<img src="../../../screenshots/command-palette.png">
+![Command Palette](../../../screenshots/command-palette.png)
 
 ### Key Assignments
 

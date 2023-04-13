@@ -1,3 +1,7 @@
+---
+tags:
+  - spawn
+---
 # `set_environment_variables`
 
 Specifies a map of environment variables that should be set when spawning new
@@ -7,4 +11,4 @@ running program on any Operating System.
 
 This is not used when working with remote domains.
 
-See also: [Launching Programs](../../launch.html#passing-environment-variables-to-the-spawned-program)
+See also: [Launching Programs](../../launch.md#passing-environment-variables-to-the-spawned-program)

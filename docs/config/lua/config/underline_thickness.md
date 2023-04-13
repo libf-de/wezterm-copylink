@@ -1,6 +1,10 @@
-# underline_thickness
+---
+tags:
+  - font
+---
+# `underline_thickness`
 
-*Since: 20221119-145034-49b9839f*
+{{since('20221119-145034-49b9839f')}}
 
 If specified, overrides the base thickness of underlines. The underline
 thickness is also used for rendering split pane dividers and a number of other

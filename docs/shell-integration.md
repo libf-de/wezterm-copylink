@@ -1,5 +1,3 @@
-## Shell Integration
-
 wezterm supports integrating with the shell through the following means:
 
 * `OSC 7` Escape sequences to advise the terminal of the working directory
@@ -18,6 +16,7 @@ shell program to emit the escape sequences at the appropriate place.
 
 You can find some [examples for various shells in the wezterm
 repo](https://github.com/wez/wezterm/tree/main/assets/shell-integration).
+Xonsh is supported via a [term-integrations](https://github.com/jnoortheen/xontrib-term-integrations) plugin.
 
 Starting with version 20210314-114017-04b7cedd, the Fedora and Debian packages
 automatically activate shell integration for Bash and Zsh.
@@ -27,7 +26,7 @@ can be found below.
 
 [Learn more about OSC 133 Semantic Prompt Escapes](https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md).
 
-### User Vars
+## User Vars
 
 `OSC 1337` provides a means for setting *user vars*, which are somewhat similar
 to environment variables, except that they are variables associated with a
@@ -65,7 +64,7 @@ struct.
 You may wish to use this information to adjust what is shown in your tab titles
 or in the status area.
 
-### OSC 7 Escape sequence to set the working directory
+## OSC 7 Escape sequence to set the working directory
 
 `OSC 7` means Operating System Command number 7.  This is an escape sequence
 that originated in the macOS Terminal application that is used to advise the
@@ -90,7 +89,7 @@ zsh source a `vte.sh` script that configures the shell to emit this
 sequence.  On other systems you will likely need to configure this
 for yourself.
 
-### OSC 7 on Windows with cmd.exe
+## OSC 7 on Windows with cmd.exe
 
 `cmd.exe` doesn't allow a lot of flexibility in configuring the prompt,
 but fortunately it does allow for emitting escape sequences.  You
@@ -101,14 +100,12 @@ the visible prompt with green and purple colors, and makes the prompt
 span multiple lines:
 
 ```lua
-return {
-  set_environment_variables = {
-    prompt = '$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ',
-  },
+config.set_environment_variables = {
+  prompt = '$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ',
 }
 ```
 
-### OSC 7 on Windows with powershell
+## OSC 7 on Windows with powershell
 
 You can configure a custom prompt in powershell by creating/editing your
 [powershell profile](https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_profiles?view=powershell-7.1)
@@ -127,6 +124,24 @@ function prompt {
 }
 ```
 
+## OSC 7 on Windows with powershell (with starship)
+
+When using [Starship](https://starship.rs/), since it has taken control of the prompt, hooking in to set
+OSC 7 can be achieved this way instead:
+
+```powershell
+$prompt = ""
+function Invoke-Starship-PreCommand {
+    $current_location = $executionContext.SessionState.Path.CurrentLocation
+    if ($current_location.Provider.Name -eq "FileSystem") {
+        $ansi_escape = [char]27
+        $provider_path = $current_location.ProviderPath -replace "\\", "/"
+        $prompt = "$ansi_escape]7;file://${env:COMPUTERNAME}/${provider_path}$ansi_escape\"
+    }
+    $host.ui.Write($prompt)
+}
+```
+
 ## Using Clink on Windows Systems
 
 [Clink](https://github.com/chrisant996/clink) brings bash style line editing,
@@ -138,25 +153,22 @@ you might configure this:
 
 ```lua
 local wezterm = require 'wezterm'
+local config = {}
 
-local default_prog
-local set_environment_variables = {}
+config.set_environment_variables = {}
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   -- Use OSC 7 as per the above example
-  set_environment_variables['prompt'] =
+  config.set_environment_variables['prompt'] =
     '$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m '
   -- use a more ls-like output format for dir
-  set_environment_variables['DIRCMD'] = '/d'
+  config.set_environment_variables['DIRCMD'] = '/d'
   -- And inject clink into the command prompt
-  default_prog =
+  config.default_prog =
     { 'cmd.exe', '/s', '/k', 'c:/clink/clink_x64.exe', 'inject', '-q' }
 end
 
-return {
-  default_prog = default_prog,
-  set_environment_variables = set_environment_variables,
-}
+return config
 ```
 
 Now, rather than just running `cmd.exe` on its own, this will cause `cmd.exe`

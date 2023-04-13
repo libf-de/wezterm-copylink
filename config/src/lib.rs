@@ -32,6 +32,7 @@ mod keys;
 pub mod lua;
 pub mod meta;
 mod scheme_data;
+mod serial;
 mod ssh;
 mod terminal;
 mod tls;
@@ -49,6 +50,7 @@ pub use exec_domain::*;
 pub use font::*;
 pub use frontend::*;
 pub use keys::*;
+pub use serial::*;
 pub use ssh::*;
 pub use terminal::*;
 pub use tls::*;
@@ -61,7 +63,7 @@ type ErrorCallback = fn(&str);
 
 lazy_static! {
     pub static ref HOME_DIR: PathBuf = dirs_next::home_dir().expect("can't find HOME dir");
-    pub static ref CONFIG_DIR: PathBuf = xdg_config_home();
+    pub static ref CONFIG_DIRS: Vec<PathBuf> = config_dirs();
     pub static ref RUNTIME_DIR: PathBuf = compute_runtime_dir().unwrap();
     static ref CONFIG: Configuration = Configuration::new();
     static ref CONFIG_FILE_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -90,7 +92,7 @@ fn toml_to_dynamic(value: &toml::Value) -> Value {
         toml::Value::Datetime(d) => d.to_string().to_dynamic(),
         toml::Value::Array(a) => a
             .iter()
-            .map(|element| toml_to_dynamic(&element))
+            .map(toml_to_dynamic)
             .collect::<Vec<_>>()
             .to_dynamic(),
         // Allow `colors.indexed` to be passed through with actual integer keys
@@ -114,7 +116,10 @@ pub fn build_default_schemes() -> HashMap<String, Palette> {
     for (scheme_name, data) in scheme_data::SCHEMES.iter() {
         let scheme_name = scheme_name.to_string();
         let scheme = ColorSchemeFile::from_toml_str(data).unwrap();
-        color_schemes.insert(scheme_name, scheme.colors);
+        color_schemes.insert(scheme_name, scheme.colors.clone());
+        for alias in scheme.metadata.aliases {
+            color_schemes.insert(alias, scheme.colors.clone());
+        }
     }
     color_schemes
 }
@@ -166,7 +171,7 @@ impl LuaConfigState {
 
     /// Take a reference on the latest generation of the lua context
     fn get_lua(&self) -> Option<Rc<mlua::Lua>> {
-        self.lua.as_ref().map(|lua| Rc::clone(lua))
+        self.lua.as_ref().map(Rc::clone)
     }
 }
 
@@ -266,9 +271,9 @@ where
 
 fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
     // Cause the default config to be re-evaluated with the overrides applied
-    let lua = lua::make_lua_context(Path::new("override"))?;
+    let lua = lua::make_lua_context(Path::new("override")).context("make_lua_context")?;
     let table = mlua::Value::Table(lua.create_table()?);
-    let config = Config::apply_overrides_to(&lua, table)?;
+    let config = Config::apply_overrides_to(&lua, table).context("apply_overrides_to")?;
 
     let dyn_config = luahelper::lua_value_to_dynamic(config)?;
 
@@ -284,7 +289,7 @@ fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
     // problems earlier than we use them.
     let _ = cfg.key_bindings();
 
-    cfg.check_consistency()?;
+    cfg.check_consistency().context("check_consistency")?;
 
     Ok(cfg)
 }
@@ -300,7 +305,7 @@ pub fn common_init(
         CONFIG_SKIP.store(true, Ordering::Relaxed);
     }
 
-    set_config_overrides(overrides)?;
+    set_config_overrides(overrides).context("common_init: set_config_overrides")?;
     reload();
     Ok(())
 }
@@ -335,6 +340,18 @@ fn xdg_config_home() -> PathBuf {
         Some(p) => p,
         None => HOME_DIR.join(".config").join("wezterm"),
     }
+}
+
+fn config_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    dirs.push(xdg_config_home());
+
+    #[cfg(unix)]
+    if let Some(d) = std::env::var_os("XDG_CONFIG_DIRS") {
+        dirs.extend(std::env::split_paths(&d).map(|s| PathBuf::from(s).join("wezterm")));
+    }
+
+    dirs
 }
 
 pub fn set_config_file_override(path: &Path) {

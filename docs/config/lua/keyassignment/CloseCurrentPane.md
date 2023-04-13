@@ -1,4 +1,4 @@
-# CloseCurrentPane
+# `CloseCurrentPane`
 
 Closes the current pane.  If that was the last pane in the tab, closes the tab.
 If that was the last tab, closes that window.  If that was the last window,
@@ -8,15 +8,11 @@ The act of closing a pane shuts down the PTY associated with the pane and
 then kills the process associated with that pane.
 
 ```lua
-local wezterm = require 'wezterm'
-
-return {
-  keys = {
-    {
-      key = 'w',
-      mods = 'CMD',
-      action = wezterm.action.CloseCurrentPane { confirm = true },
-    },
+config.keys = {
+  {
+    key = 'w',
+    mods = 'CMD',
+    action = wezterm.action.CloseCurrentPane { confirm = true },
   },
 }
 ```

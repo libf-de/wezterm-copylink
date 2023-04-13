@@ -1,6 +1,6 @@
-# ScrollToPrompt
+# `ScrollToPrompt`
 
-*Since: 20210203-095643-70a364eb*
+{{since('20210203-095643-70a364eb')}}
 
 This action operates on Semantic Zones defined by applications that use [OSC
 133 Semantic Prompt Escapes](https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md) and requires configuring your shell to emit those sequences.
@@ -21,14 +21,11 @@ For the purposes of scrolling, the "current zone" is considered to be the one
 closest to the top of the viewport.
 
 ```lua
-local wezterm = require 'wezterm'
 local act = wezterm.action
 
-return {
-  keys = {
-    { key = 'UpArrow', mods = 'SHIFT', action = act.ScrollToPrompt(-1) },
-    { key = 'DownArrow', mods = 'SHIFT', action = act.ScrollToPrompt(1) },
-  },
+config.keys = {
+  { key = 'UpArrow', mods = 'SHIFT', action = act.ScrollToPrompt(-1) },
+  { key = 'DownArrow', mods = 'SHIFT', action = act.ScrollToPrompt(1) },
 }
 ```
 

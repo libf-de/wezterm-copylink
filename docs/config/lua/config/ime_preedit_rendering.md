@@ -1,6 +1,11 @@
+---
+tags:
+  - keys
+  - appearance
+---
 # `ime_preedit_rendering`
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 Control IME preedit rendering.
 IME preedit is an area that is used to display the string being preedited in IME.
@@ -25,14 +30,13 @@ WezTerm supports the following IME preedit rendering.
 You can control IME preedit rendering in your configuraiton file:
 
 ```lua
-return {
-  ime_preedit_rendering = 'System',
-}
+config.ime_preedit_rendering = 'System'
 ```
 
 Otherwise, the default is `"Builtin"`.
 
 Note:
+
 * Changing `ime_preedit_rendering` usually requires re-launching WezTerm to take full effect.
 * In macOS, `ime_preedit_rendering` has effected nothing yet.
   IME preedit is always rendered by WezTerm itself.

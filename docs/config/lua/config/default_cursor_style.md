@@ -1,3 +1,8 @@
+---
+tags:
+  - appearance
+  - text_cursor
+---
 # `default_cursor_style = "SteadyBlock"`
 
 Specifies the default cursor style.  Various escape sequences
@@ -11,9 +16,7 @@ Acceptable values are `SteadyBlock`, `BlinkingBlock`,
 and `BlinkingBar`.
 
 ```lua
-return {
-  default_cursor_style = 'SteadyBlock',
-}
+config.default_cursor_style = 'SteadyBlock'
 ```
 
 Using a blinking style puts more load on the graphics subsystem.

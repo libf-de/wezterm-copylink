@@ -1,3 +1,7 @@
+---
+tags:
+  - updates
+---
 # `show_update_window`
 
 When Wezterm checks for an update and detects a new version, this
@@ -8,7 +12,5 @@ See [check_for_updates](check_for_updates.md) for more information on
 the automatic update checks.
 
 ```lua
-return {
-  show_update_window = false,
-}
+config.show_update_window = false
 ```

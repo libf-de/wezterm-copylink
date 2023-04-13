@@ -73,7 +73,12 @@ pub fn fixup_appimage() {
             clean_wezterm_config_env();
         }
 
-        if config::CONFIG_DIR.starts_with(append_extra_file_name_suffix(&appimage, ".config")) {
+        if std::env::var("XDG_CONFIG_HOME")
+            .map(|d| {
+                PathBuf::from(d).starts_with(append_extra_file_name_suffix(&appimage, ".config"))
+            })
+            .unwrap_or_default()
+        {
             std::env::remove_var("XDG_CONFIG_HOME");
             clean_wezterm_config_env();
         }
@@ -179,6 +184,10 @@ fn register_lua_modules() {
 }
 
 pub fn bootstrap() {
+    config::assign_version_info(
+        wezterm_version::wezterm_version(),
+        wezterm_version::wezterm_target_triple(),
+    );
     setup_logger();
     register_panic_hook();
 

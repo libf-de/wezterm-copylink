@@ -44,21 +44,31 @@ use winapi::um::wincon::{
 
 bitflags! {
     #[cfg_attr(feature="use_serde", derive(Serialize, Deserialize))]
-    #[derive(Default)]
-    pub struct Modifiers: u8 {
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Modifiers: u16 {
         const NONE = 0;
         const SHIFT = 1<<1;
         const ALT = 1<<2;
         const CTRL = 1<<3;
         const SUPER = 1<<4;
+        const LEFT_ALT = 1<<5;
+        const RIGHT_ALT = 1<<6;
         /// This is a virtual modifier used by wezterm
-        #[doc(hidden)]
-        const LEADER = 1<<5;
+        const LEADER = 1<<7;
+        const LEFT_CTRL = 1<<8;
+        const RIGHT_CTRL = 1<<9;
+        const LEFT_SHIFT = 1<<10;
+        const RIGHT_SHIFT = 1<<11;
+        const ENHANCED_KEY = 1<<12;
+        /// Not really a modifier, but a keyboard driver state
+        const CAPS_LOCK = 1<<13;
+        /// Not really a modifier, but a keyboard driver state
+        const NUM_LOCK = 1<<14;
     }
 }
 bitflags! {
     #[cfg_attr(feature="use_serde", derive(Serialize, Deserialize))]
-    #[derive(Default)]
+    #[derive(Debug, Default, Clone, PartialEq, Eq)]
     pub struct MouseButtons: u8 {
         const NONE = 0;
         const LEFT = 1<<1;
@@ -211,6 +221,11 @@ pub enum KeyCode {
     ApplicationRightArrow,
     ApplicationUpArrow,
     ApplicationDownArrow,
+    KeyPadHome,
+    KeyPadEnd,
+    KeyPadPageUp,
+    KeyPadPageDown,
+    KeyPadBegin,
 
     #[doc(hidden)]
     InternalPasteStart,
@@ -257,206 +272,6 @@ impl KeyCode {
         )
     }
 
-    /// <https://sw.kovidgoyal.net/kitty/keyboard-protocol/#functional-key-definitions>
-    fn kitty_function_code(self) -> Option<u32> {
-        use KeyCode::*;
-        Some(match self {
-            Escape => 27,
-            Enter => 13,
-            Tab => 9,
-            Backspace => 127,
-            CapsLock => 57358,
-            ScrollLock => 57359,
-            NumLock => 57360,
-            PrintScreen => 57361,
-            Pause => 57362,
-            Menu => 57363,
-            Function(n) if n >= 13 && n <= 35 => 57376 + n as u32 - 13,
-            Numpad0 => 57399,
-            Numpad1 => 57400,
-            Numpad2 => 57401,
-            Numpad3 => 57402,
-            Numpad4 => 57403,
-            Numpad5 => 57404,
-            Numpad6 => 57405,
-            Numpad7 => 57406,
-            Numpad8 => 57407,
-            Numpad9 => 57408,
-            Decimal => 57409,
-            Divide => 57410,
-            Multiply => 57411,
-            Subtract => 57412,
-            Add => 57413,
-            // KeypadEnter => 57414,
-            // KeypadEquals => 57415,
-            Separator => 57416,
-            ApplicationLeftArrow => 57417,
-            ApplicationRightArrow => 57418,
-            ApplicationUpArrow => 57419,
-            ApplicationDownArrow => 57420,
-            PageUp => 57421,
-            PageDown => 57422,
-            Home => 57423,
-            End => 57424,
-            Insert => 57425,
-            // KeypadDelete => 57426,
-            MediaPlayPause => 57430,
-            MediaStop => 57432,
-            MediaNextTrack => 57435,
-            MediaPrevTrack => 57436,
-            VolumeDown => 57436,
-            VolumeUp => 57439,
-            VolumeMute => 57440,
-            LeftShift => 57441,
-            LeftControl => 57442,
-            LeftAlt => 57443,
-            LeftWindows => 57444,
-            RightShift => 57447,
-            RightControl => 57448,
-            RightAlt => 57449,
-            RightWindows => 57450,
-            _ => return None,
-        })
-    }
-
-    fn encode_kitty(
-        &self,
-        mods: Modifiers,
-        is_down: bool,
-        flags: KittyKeyboardFlags,
-    ) -> Result<String> {
-        use KeyCode::*;
-
-        if !flags.contains(KittyKeyboardFlags::REPORT_EVENT_TYPES) && !is_down {
-            return Ok(String::new());
-        }
-
-        // Normalize
-        let key = match self {
-            Char('\r') => Enter,
-            Char('\t') => Tab,
-            Char('\x7f') => Delete,
-            Char('\x08') => Backspace,
-            c => *c,
-        };
-
-        if mods.is_empty() && !flags.contains(KittyKeyboardFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES) {
-            // Check for simple text generating keys
-            match key {
-                Enter => return Ok("\r".to_string()),
-                Tab => return Ok("\t".to_string()),
-                Backspace => return Ok("\x7f".to_string()),
-                Char(c) => return Ok(c.to_string()),
-                _ => {}
-            }
-        }
-
-        let mut modifiers = 0;
-        if mods.contains(Modifiers::SHIFT) {
-            modifiers |= 1;
-        }
-        if mods.contains(Modifiers::ALT) {
-            modifiers |= 2;
-        }
-        if mods.contains(Modifiers::CTRL) {
-            modifiers |= 4;
-        }
-        if mods.contains(Modifiers::SUPER) {
-            modifiers |= 8;
-        }
-        modifiers += 1;
-
-        let event_type = if flags.contains(KittyKeyboardFlags::REPORT_EVENT_TYPES) && !is_down {
-            ":3"
-        } else {
-            ""
-        };
-
-        match key {
-            Char(shifted_key) => {
-                let c = shifted_key.to_ascii_lowercase();
-
-                let key_code = if flags.contains(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS)
-                    && c != shifted_key
-                {
-                    // Note: we don't have enough information here to know what the base-layout key
-                    // should really be.
-                    let base_layout = c;
-                    format!("{}:{}:{}", c, shifted_key, base_layout)
-                } else {
-                    (c as u32).to_string()
-                };
-
-                Ok(format!("\x1b[{key_code};{modifiers}{event_type}u"))
-            }
-            LeftArrow | RightArrow | UpArrow | DownArrow | Home | End => {
-                let c = match key {
-                    UpArrow => 'A',
-                    DownArrow => 'B',
-                    RightArrow => 'C',
-                    LeftArrow => 'D',
-                    Home => 'H',
-                    End => 'F',
-                    _ => unreachable!(),
-                };
-                Ok(format!("\x1b[1;{modifiers}{event_type}{c}"))
-            }
-            PageUp | PageDown | Insert | Delete => {
-                let c = match key {
-                    Insert => 2,
-                    Delete => 3,
-                    PageUp => 5,
-                    PageDown => 6,
-                    _ => unreachable!(),
-                };
-
-                Ok(format!("\x1b[{c};{modifiers}{event_type}~"))
-            }
-            Function(n) if n < 13 => {
-                if mods.is_empty() && n < 5 {
-                    // F1-F4 are encoded using SS3 if there are no modifiers
-                    Ok(format!(
-                        "{}",
-                        match n {
-                            1 => "\x1bOP",
-                            2 => "\x1bOQ",
-                            3 => "\x1bOR",
-                            4 => "\x1bOS",
-                            _ => unreachable!("wat?"),
-                        }
-                    ))
-                } else {
-                    // Higher numbered F-keys plus modified F-keys are encoded
-                    // using CSI instead of SS3.
-                    let intro = match n {
-                        1 => "\x1b[11",
-                        2 => "\x1b[12",
-                        3 => "\x1b[13",
-                        4 => "\x1b[14",
-                        5 => "\x1b[15",
-                        6 => "\x1b[17",
-                        7 => "\x1b[18",
-                        8 => "\x1b[19",
-                        9 => "\x1b[20",
-                        10 => "\x1b[21",
-                        11 => "\x1b[23",
-                        12 => "\x1b[24",
-                        _ => unreachable!(),
-                    };
-                    Ok(format!("{intro};{modifiers}{event_type}~"))
-                }
-            }
-
-            _ => {
-                if let Some(code) = key.kitty_function_code() {
-                    Ok(format!("\x1b[{code};{modifiers}{event_type}u"))
-                } else {
-                    Ok(String::new())
-                }
-            }
-        }
-    }
-
     /// Returns the byte sequence that represents this KeyCode and Modifier combination,
     pub fn encode(
         &self,
@@ -464,12 +279,6 @@ impl KeyCode {
         modes: KeyCodeEncodeModes,
         is_down: bool,
     ) -> Result<String> {
-        match &modes.encoding {
-            KeyboardEncoding::Kitty(flags) if *flags != KittyKeyboardFlags::NONE => {
-                return self.encode_kitty(mods, is_down, *flags);
-            }
-            _ => {}
-        }
         if !is_down {
             // We only want down events
             return Ok(String::new());
@@ -601,7 +410,9 @@ impl KeyCode {
             }
 
             Home
+            | KeyPadHome
             | End
+            | KeyPadEnd
             | UpArrow
             | DownArrow
             | RightArrow
@@ -649,7 +460,7 @@ impl KeyCode {
                 }
             }
 
-            PageUp | PageDown | Insert | Delete => {
+            PageUp | PageDown | KeyPadPageUp | KeyPadPageDown | Insert | Delete => {
                 let c = match key {
                     Insert => 2,
                     Delete => 3,
@@ -720,9 +531,47 @@ impl KeyCode {
                 }
             }
 
-            // TODO: emit numpad sequences
-            Numpad0 | Numpad1 | Numpad2 | Numpad3 | Numpad4 | Numpad5 | Numpad6 | Numpad7
-            | Numpad8 | Numpad9 | Multiply | Add | Separator | Subtract | Decimal | Divide => {}
+            Numpad0 | Numpad3 | Numpad9 | Decimal => {
+                let intro = match key {
+                    Numpad0 => "\x1b[2",
+                    Numpad3 => "\x1b[6",
+                    Numpad9 => "\x1b[6",
+                    Decimal => "\x1b[3",
+                    _ => unreachable!(),
+                };
+
+                let encoded_mods = encode_modifiers(mods);
+                if encoded_mods == 0 {
+                    // If no modifiers are held, don't send the modifier
+                    // sequence, as the modifier encoding is a CSI-u extension.
+                    write!(buf, "{}~", intro)?;
+                } else {
+                    write!(buf, "{};{}~", intro, 1 + encoded_mods)?;
+                }
+            }
+
+            Numpad1 | Numpad2 | Numpad4 | Numpad5 | KeyPadBegin | Numpad6 | Numpad7 | Numpad8 => {
+                let c = match key {
+                    Numpad1 => "F",
+                    Numpad2 => "B",
+                    Numpad4 => "D",
+                    Numpad5 => "E",
+                    Numpad6 => "C",
+                    Numpad7 => "H",
+                    Numpad8 => "A",
+                    _ => unreachable!(),
+                };
+
+                let encoded_mods = encode_modifiers(mods);
+                if encoded_mods == 0 {
+                    // If no modifiers are held, don't send the modifier
+                    write!(buf, "{}{}", CSI, c)?;
+                } else {
+                    write!(buf, "{}1;{}{}", CSI, 1 + encode_modifiers(mods), c)?;
+                }
+            }
+
+            Multiply | Add | Separator | Subtract | Divide => {}
 
             // Modifier keys pressed on their own don't expand to anything
             Control | LeftControl | RightControl | Alt | LeftAlt | RightAlt | Menu | LeftMenu
@@ -2085,6 +1934,42 @@ mod test {
                 })
             ],
             res
+        );
+    }
+
+    #[test]
+    fn encode_issue_3478_xterm() {
+        let mode = KeyCodeEncodeModes {
+            encoding: KeyboardEncoding::Xterm,
+            newline_mode: false,
+            application_cursor_keys: false,
+            modify_other_keys: None,
+        };
+
+        assert_eq!(
+            KeyCode::Numpad0
+                .encode(Modifiers::NONE, mode, true)
+                .unwrap(),
+            "\u{1b}[2~".to_string()
+        );
+        assert_eq!(
+            KeyCode::Numpad0
+                .encode(Modifiers::SHIFT, mode, true)
+                .unwrap(),
+            "\u{1b}[2;2~".to_string()
+        );
+
+        assert_eq!(
+            KeyCode::Numpad1
+                .encode(Modifiers::NONE, mode, true)
+                .unwrap(),
+            "\u{1b}[F".to_string()
+        );
+        assert_eq!(
+            KeyCode::Numpad1
+                .encode(Modifiers::NONE | Modifiers::SHIFT, mode, true)
+                .unwrap(),
+            "\u{1b}[1;2F".to_string()
         );
     }
 }

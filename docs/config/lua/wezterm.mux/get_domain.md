@@ -1,6 +1,6 @@
 # `wezterm.mux.get_domain(name_or_id)`
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 Resolves `name_or_id` to a domain and returns a
 [MuxDomain](../MuxDomain/index.md) object representation of it.

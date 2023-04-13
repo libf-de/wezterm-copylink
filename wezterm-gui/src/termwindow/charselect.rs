@@ -1,6 +1,6 @@
 use crate::termwindow::box_model::*;
 use crate::termwindow::modal::Modal;
-use crate::termwindow::render::{
+use crate::termwindow::render::corners::{
     BOTTOM_LEFT_ROUNDED_CORNER, BOTTOM_RIGHT_ROUNDED_CORNER, TOP_LEFT_ROUNDED_CORNER,
     TOP_RIGHT_ROUNDED_CORNER,
 };
@@ -40,6 +40,13 @@ pub struct CharSelector {
     max_rows_on_screen: RefCell<usize>,
     copy_on_select: bool,
     copy_to: ClipboardCopyDestination,
+}
+
+enum Move {
+    Up(usize),
+    Down(usize),
+    PageUp,
+    PageDown,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -508,30 +515,38 @@ impl CharSelector {
         *self.top_row.borrow_mut() = 0;
     }
 
-    fn move_up(&self) {
-        let mut row = self.selected_row.borrow_mut();
-        *row = row.saturating_sub(1);
-
-        let mut top_row = self.top_row.borrow_mut();
-        if *row < *top_row {
-            *top_row = *row;
-        }
+    fn do_move(&self, how: Move) {
+        let page_size = *self.max_rows_on_screen.borrow();
+        let current_row = *self.selected_row.borrow();
+        let dest = match how {
+            Move::Up(n) => current_row.saturating_sub(n),
+            Move::PageUp => current_row.saturating_sub(page_size),
+            Move::Down(n) => current_row.saturating_add(n),
+            Move::PageDown => current_row.saturating_add(page_size),
+        };
+        *self.selected_row.borrow_mut() = dest;
+        self.nav_selection();
     }
 
-    fn move_down(&self) {
+    /// handles selection constraints, moving list, keeping selection centered
+    fn nav_selection(&self) {
         let max_rows_on_screen = *self.max_rows_on_screen.borrow();
         let limit = self
             .matches
             .borrow()
             .as_ref()
             .map(|m| m.matches.len())
-            .unwrap_or_else(|| self.aliases.len())
-            .saturating_sub(1);
-        let mut row = self.selected_row.borrow_mut();
-        *row = row.saturating_add(1).min(limit);
-        let mut top_row = self.top_row.borrow_mut();
-        if *row + *top_row > max_rows_on_screen - 1 {
-            *top_row = row.saturating_sub(max_rows_on_screen - 1);
+            .unwrap_or_else(|| self.aliases.len());
+        {
+            let mut row = self.selected_row.borrow_mut();
+            let mut top_row = self.top_row.borrow_mut();
+            *row = row.min(limit.saturating_sub(1));
+            if *row < *top_row {
+                *top_row = *row;
+            }
+            if *row + *top_row > max_rows_on_screen / 2 {
+                *top_row = row.saturating_sub(max_rows_on_screen / 2);
+            }
         }
     }
 }
@@ -554,7 +569,7 @@ impl Modal for CharSelector {
         key: KeyCode,
         mods: KeyModifiers,
         term_window: &mut TermWindow,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         const CTRL_AND_SHIFT: Modifiers = KeyModifiers::CTRL.union(KeyModifiers::SHIFT);
 
         match (key, mods) {
@@ -575,11 +590,17 @@ impl Modal for CharSelector {
                 self.selection.borrow_mut().clear();
                 self.updated_input();
             }
+            (KeyCode::PageUp, KeyModifiers::NONE) => {
+                self.do_move(Move::PageUp);
+            }
+            (KeyCode::PageDown, KeyModifiers::NONE) => {
+                self.do_move(Move::PageDown);
+            }
             (KeyCode::UpArrow, KeyModifiers::NONE) => {
-                self.move_up();
+                self.do_move(Move::Up(1));
             }
             (KeyCode::DownArrow, KeyModifiers::NONE) => {
-                self.move_down();
+                self.do_move(Move::Down(1));
             }
             (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
                 // Type to add to the selection
@@ -603,10 +624,10 @@ impl Modal for CharSelector {
                 // Enter the selected character to the current pane
                 let selected_idx = *self.selected_row.borrow();
                 let alias_idx = match self.matches.borrow().as_ref() {
-                    None => return Ok(()),
+                    None => return Ok(true),
                     Some(results) => match results.matches.get(selected_idx) {
                         Some(i) => *i,
-                        None => return Ok(()),
+                        None => return Ok(true),
                     },
                 };
                 let item = &self.aliases[alias_idx];
@@ -627,12 +648,12 @@ impl Modal for CharSelector {
                     pane.writer().write_all(glyph.as_bytes()).ok();
                 }
                 term_window.cancel_modal();
-                return Ok(());
+                return Ok(true);
             }
-            _ => return Ok(()),
+            _ => return Ok(false),
         }
         term_window.invalidate_modal();
-        Ok(())
+        Ok(true)
     }
 
     fn computed_element(

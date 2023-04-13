@@ -1,5 +1,6 @@
 use crate::{Position, StableRowIndex, TerminalState};
 use anyhow::Context;
+use humansize::{SizeFormatter, DECIMAL};
 use ordered_float::NotNan;
 use std::sync::Arc;
 use termwiz::cell::Cell;
@@ -109,7 +110,7 @@ impl TerminalState {
         let first_row = self.screen().visible_row_to_stable_row(self.cursor.y);
 
         let mut ypos = NotNan::new(params.source_origin_y as f32 / params.image_height as f32)
-            .context("computing ypos")?;
+            .with_context(|| format!("computing ypos {params:#?}"))?;
         let start_xpos = NotNan::new(params.source_origin_x as f32 / params.image_width as f32)
             .context("computing xpos")?;
 
@@ -196,7 +197,7 @@ impl TerminalState {
                 xpos += x_delta;
             }
             ypos += y_delta;
-            if !params.do_not_move_cursor {
+            if !params.do_not_move_cursor && y < height_in_cells - 1 {
                 self.new_line(false);
             }
         }
@@ -213,7 +214,7 @@ impl TerminalState {
             if bottom_right {
                 self.set_cursor_pos(
                     &Position::Relative(width_in_cells as i64),
-                    &Position::Relative(-1),
+                    &Position::Relative(0),
                 );
             }
         }
@@ -226,15 +227,18 @@ impl TerminalState {
     }
 
     /// cache recent images and avoid assigning a new id for repeated data!
-    pub(crate) fn raw_image_to_image_data(&mut self, data: ImageDataType) -> Arc<ImageData> {
-        let data = data.decode();
+    pub(crate) fn raw_image_to_image_data(
+        &mut self,
+        data: ImageDataType,
+    ) -> Result<Arc<ImageData>, termwiz::error::InternalError> {
         let key = data.compute_hash();
         if let Some(item) = self.image_cache.get(&key) {
-            Arc::clone(item)
+            Ok(Arc::clone(item))
         } else {
+            let data = data.swap_out()?;
             let image_data = Arc::new(ImageData::with_data(data));
             self.image_cache.put(key, Arc::clone(&image_data));
-            image_data
+            Ok(image_data)
         }
     }
 }
@@ -244,16 +248,21 @@ pub(crate) fn check_image_dimensions(width: u32, height: u32) -> anyhow::Result<
     let size = width.saturating_mul(height).saturating_mul(4);
     if size > MAX_IMAGE_SIZE {
         anyhow::bail!(
-            "Ignoring image data {}x{} because {} bytes > max allowed {}",
+            "Ignoring image data for image with dimensions {}x{} \
+             because required RAM {} > max allowed {}",
             width,
             height,
-            size,
-            MAX_IMAGE_SIZE
+            SizeFormatter::new(size, DECIMAL),
+            SizeFormatter::new(MAX_IMAGE_SIZE, DECIMAL),
         );
+    }
+    if size == 0 {
+        anyhow::bail!("Ignoring image with 0x0 dimensions");
     }
     Ok(())
 }
 
+#[derive(Debug)]
 pub(crate) struct ImageInfo {
     pub width: u32,
     pub height: u32,

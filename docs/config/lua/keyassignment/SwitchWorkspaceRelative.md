@@ -1,6 +1,6 @@
-# SwitchWorkspaceRelative
+# `SwitchWorkspaceRelative`
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 Switch to the workspace relative to the current workspace.  Workspaces are ordered
 lexicographically based on their names.
@@ -21,16 +21,14 @@ wezterm.on('update-right-status', function(window, pane)
   window:set_right_status(window:active_workspace())
 end)
 
-return {
-  keys = {
-    {
-      key = '9',
-      mods = 'ALT',
-      action = act.ShowLauncherArgs { flags = 'FUZZY|WORKSPACES' },
-    },
-    { key = 'n', mods = 'CTRL', action = act.SwitchWorkspaceRelative(1) },
-    { key = 'p', mods = 'CTRL', action = act.SwitchWorkspaceRelative(-1) },
+config.keys = {
+  {
+    key = '9',
+    mods = 'ALT',
+    action = act.ShowLauncherArgs { flags = 'FUZZY|WORKSPACES' },
   },
+  { key = 'n', mods = 'CTRL', action = act.SwitchWorkspaceRelative(1) },
+  { key = 'p', mods = 'CTRL', action = act.SwitchWorkspaceRelative(-1) },
 }
 ```
 

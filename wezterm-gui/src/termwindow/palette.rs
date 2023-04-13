@@ -1,7 +1,7 @@
 use crate::commands::{CommandDef, ExpandedCommand};
 use crate::termwindow::box_model::*;
 use crate::termwindow::modal::Modal;
-use crate::termwindow::render::{
+use crate::termwindow::render::corners::{
     BOTTOM_LEFT_ROUNDED_CORNER, BOTTOM_RIGHT_ROUNDED_CORNER, TOP_LEFT_ROUNDED_CORNER,
     TOP_RIGHT_ROUNDED_CORNER,
 };
@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use termwiz::nerdfonts::NERD_FONTS;
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent};
 use window::color::LinearRgba;
+use window::Modifiers;
 
 struct MatchResults {
     selection: String,
@@ -74,8 +75,16 @@ fn save_recent(command: &ExpandedCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_commands() -> Vec<ExpandedCommand> {
+fn build_commands(filter_copy_mode: bool) -> Vec<ExpandedCommand> {
     let mut commands = CommandDef::actions_for_palette_and_menubar(&config::configuration());
+
+    commands.retain(|cmd| {
+        if filter_copy_mode {
+            !matches!(cmd.action, KeyAssignment::CopyMode(_))
+        } else {
+            true
+        }
+    });
 
     let mut scores: HashMap<&str, f64> = HashMap::new();
     let recents = load_recents();
@@ -155,8 +164,18 @@ fn compute_matches(selection: &str, commands: &[ExpandedCommand]) -> Vec<usize> 
 }
 
 impl CommandPalette {
-    pub fn new(_term_window: &mut TermWindow) -> Self {
-        let commands = build_commands();
+    pub fn new(term_window: &mut TermWindow) -> Self {
+        // Showing the CopyMode actions in the palette is useless
+        // if the CopyOverlay isn't active, so figure out if that
+        // is the case so that we can filter them out in build_commands.
+        let filter_copy_mode = term_window
+            .get_active_pane_or_overlay()
+            .map(|pane| {
+                pane.downcast_ref::<crate::termwindow::CopyOverlay>()
+                    .is_none()
+            })
+            .unwrap_or(true);
+        let commands = build_commands(filter_copy_mode);
 
         Self {
             element: RefCell::new(None),
@@ -230,28 +249,27 @@ impl CommandPalette {
                 None => &' ',
             };
 
+            let solid_bg_color: InheritableColor = term_window
+                .config
+                .command_palette_bg_color
+                .to_linear()
+                .into();
+            let solid_fg_color: InheritableColor = term_window
+                .config
+                .command_palette_fg_color
+                .to_linear()
+                .into();
+
             let (bg, text) = if display_idx == selected_row {
-                (
-                    term_window
-                        .config
-                        .command_palette_fg_color
-                        .to_linear()
-                        .into(),
-                    term_window
-                        .config
-                        .command_palette_bg_color
-                        .to_linear()
-                        .into(),
-                )
+                (solid_fg_color.clone(), solid_bg_color.clone())
             } else {
-                (
-                    LinearRgba::TRANSPARENT.into(),
-                    term_window
-                        .config
-                        .command_palette_fg_color
-                        .to_linear()
-                        .into(),
-                )
+                (LinearRgba::TRANSPARENT.into(), solid_fg_color.clone())
+            };
+
+            let (label_bg, label_text) = if display_idx == selected_row {
+                (solid_fg_color.clone(), solid_bg_color.clone())
+            } else {
+                (solid_bg_color.clone(), solid_fg_color.clone())
             };
 
             // DRY if the brief and doc are the same
@@ -263,28 +281,105 @@ impl CommandPalette {
                 format!("{group}{}. {}", command.brief, command.doc)
             };
 
+            let mut row = vec![
+                Element::new(&font, ElementContent::Text(icon.to_string()))
+                    .min_width(Some(Dimension::Cells(2.))),
+                Element::new(&font, ElementContent::Text(label)),
+            ];
+
+            if !command.keys.is_empty() {
+                let mut keys = command.keys.clone();
+
+                keys.sort_by(|(a_mods, a_key), (b_mods, b_key)| {
+                    fn score_mods(mods: &Modifiers) -> usize {
+                        let mut score: usize = mods.bits() as usize;
+                        // Prefer keys with CMD on macOS, but not on other systems,
+                        // where CMD tends to be reserved by the desktop environment
+                        if cfg!(target_os = "macos") && mods.contains(Modifiers::SUPER) {
+                            score += 1000;
+                        } else if !cfg!(target_os = "macos") && !mods.contains(Modifiers::SUPER) {
+                            score += 1000;
+                        }
+                        score
+                    }
+
+                    let a_mods = score_mods(a_mods);
+                    let b_mods = score_mods(b_mods);
+
+                    match b_mods.cmp(&a_mods) {
+                        Ordering::Equal => {}
+                        ordering => return ordering,
+                    }
+
+                    a_key.cmp(&b_key)
+                });
+
+                let separator = if term_window.config.ui_key_cap_rendering
+                    == ::window::UIKeyCapRendering::AppleSymbols
+                {
+                    ""
+                } else {
+                    "-"
+                };
+
+                let mut keys = keys
+                    .into_iter()
+                    .map(|(mods, keycode)| {
+                        let mut mod_string =
+                            mods.to_string_with_separator(::window::ModifierToStringArgs {
+                                separator,
+                                want_none: false,
+                                ui_key_cap_rendering: Some(term_window.config.ui_key_cap_rendering),
+                            });
+                        if !mod_string.is_empty() {
+                            mod_string.push_str(separator);
+                        }
+                        let keycode = crate::inputmap::ui_key(
+                            &keycode,
+                            term_window.config.ui_key_cap_rendering,
+                        );
+                        format!("{mod_string}{keycode}")
+                    })
+                    .collect::<Vec<_>>();
+
+                keys.dedup();
+                keys.truncate(term_window.config.palette_max_key_assigments_for_action);
+
+                let key_label = keys.join(", ");
+
+                row.push(
+                    Element::new(&font, ElementContent::Text(key_label))
+                        .float(Float::Right)
+                        .padding(BoxDimension {
+                            left: Dimension::Cells(1.25),
+                            right: Dimension::Cells(0.5),
+                            top: Dimension::Cells(0.),
+                            bottom: Dimension::Cells(0.),
+                        })
+                        .zindex(10)
+                        .colors(ElementColors {
+                            border: BorderColor::default(),
+                            bg: label_bg.clone(),
+                            text: label_text.clone(),
+                        }),
+                );
+            }
+
             elements.push(
-                Element::new(
-                    &font,
-                    ElementContent::Children(vec![
-                        Element::new(&font, ElementContent::Text(icon.to_string()))
-                            .min_width(Some(Dimension::Cells(2.))),
-                        Element::new(&font, ElementContent::Text(label)),
-                    ]),
-                )
-                .colors(ElementColors {
-                    border: BorderColor::default(),
-                    bg,
-                    text,
-                })
-                .padding(BoxDimension {
-                    left: Dimension::Cells(0.25),
-                    right: Dimension::Cells(0.25),
-                    top: Dimension::Cells(0.),
-                    bottom: Dimension::Cells(0.),
-                })
-                .min_width(Some(Dimension::Percent(1.)))
-                .display(DisplayType::Block),
+                Element::new(&font, ElementContent::Children(row))
+                    .colors(ElementColors {
+                        border: BorderColor::default(),
+                        bg,
+                        text,
+                    })
+                    .padding(BoxDimension {
+                        left: Dimension::Cells(0.25),
+                        right: Dimension::Cells(0.25),
+                        top: Dimension::Cells(0.),
+                        bottom: Dimension::Cells(0.),
+                    })
+                    .min_width(Some(Dimension::Percent(1.)))
+                    .display(DisplayType::Block),
             );
         }
 
@@ -292,7 +387,7 @@ impl CommandPalette {
         let size = term_window.terminal_size;
 
         // Avoid covering the entire width
-        let desired_width = (size.cols / 3).max(75).min(size.cols);
+        let desired_width = (size.cols / 3).max(120).min(size.cols);
 
         // Center it
         let avail_pixel_width =
@@ -438,7 +533,7 @@ impl Modal for CommandPalette {
         key: KeyCode,
         mods: KeyModifiers,
         term_window: &mut TermWindow,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         match (key, mods) {
             (KeyCode::Escape, KeyModifiers::NONE) | (KeyCode::Char('g'), KeyModifiers::CTRL) => {
                 term_window.cancel_modal();
@@ -471,10 +566,10 @@ impl Modal for CommandPalette {
                 // Enter the selected character to the current pane
                 let selected_idx = *self.selected_row.borrow();
                 let alias_idx = match self.matches.borrow().as_ref() {
-                    None => return Ok(()),
+                    None => return Ok(true),
                     Some(results) => match results.matches.get(selected_idx) {
                         Some(i) => *i,
-                        None => return Ok(()),
+                        None => return Ok(true),
                     },
                 };
                 let item = &self.commands[alias_idx];
@@ -488,12 +583,12 @@ impl Modal for CommandPalette {
                         log::error!("Error while performing {item:?}: {err:#}");
                     }
                 }
-                return Ok(());
+                return Ok(true);
             }
-            _ => return Ok(()),
+            _ => return Ok(false),
         }
         term_window.invalidate_modal();
-        Ok(())
+        Ok(true)
     }
 
     fn computed_element(

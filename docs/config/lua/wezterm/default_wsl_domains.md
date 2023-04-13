@@ -1,6 +1,13 @@
+---
+title: wezterm.default_wsl_domains
+tags:
+ - wsl
+ - multiplexing
+---
+
 # wezterm.default_wsl_domains()
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 Computes a list of [WslDomain](../WslDomain.md) objects, each one
 representing an installed
@@ -53,7 +60,7 @@ return {
 However, wez strongly recommends that you use `chsh` inside the WSL domain to make
 that the default shell if possible, so that you can avoid this additional configuration!
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 The `default_cwd` field is now automatically set to `"~"` to make it more
 convenient to launch a WSL instance in the home directory of the configured

@@ -13,7 +13,7 @@ use crate::Mux;
 use anyhow::{bail, Context, Error};
 use async_trait::async_trait;
 use config::keyassignment::{SpawnCommand, SpawnTabDomain};
-use config::{configuration, ExecDomain, ValueOrFunc, WslDomain};
+use config::{configuration, ExecDomain, SerialDomain, ValueOrFunc, WslDomain};
 use downcast_rs::{impl_downcast, Downcast};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, PtySystem};
@@ -56,7 +56,10 @@ pub trait Domain: Downcast + Send + Sync {
         command_dir: Option<String>,
         window: WindowId,
     ) -> anyhow::Result<Arc<Tab>> {
-        let pane = self.spawn_pane(size, command, command_dir).await?;
+        let pane = self
+            .spawn_pane(size, command, command_dir)
+            .await
+            .context("spawn")?;
 
         let tab = Arc::new(Tab::new(&size));
         tab.assign_pane(&pane);
@@ -135,6 +138,19 @@ pub trait Domain: Downcast + Send + Sync {
         command_dir: Option<String>,
     ) -> anyhow::Result<Arc<dyn Pane>>;
 
+    /// The mux will call this method on the domain of the pane that
+    /// is being moved to give the domain a chance to handle the movement.
+    /// If this method returns Ok(None), then the mux will handle the
+    /// movement itself by mutating its local Tabs and Windows.
+    async fn move_pane_to_new_tab(
+        &self,
+        _pane_id: PaneId,
+        _window_id: Option<WindowId>,
+        _workspace_for_new_window: Option<String>,
+    ) -> anyhow::Result<Option<(Arc<Tab>, WindowId)>> {
+        Ok(None)
+    }
+
     /// Returns false if the `spawn` method will never succeed.
     /// There are some internal placeholder domains that are
     /// pre-created with local UI that we do not want to allow
@@ -142,6 +158,12 @@ pub trait Domain: Downcast + Send + Sync {
     fn spawnable(&self) -> bool {
         true
     }
+
+    /// Returns true if the `detach` method can be used
+    /// to detach the domain, preserving the associated
+    /// panes, or false if the `detach` method will never
+    /// succeed
+    fn detachable(&self) -> bool;
 
     /// Returns the domain id, which is useful for obtaining
     /// a handle on the domain later.
@@ -164,11 +186,6 @@ pub trait Domain: Downcast + Send + Sync {
 
     /// Indicates the state of the domain
     fn state(&self) -> DomainState;
-
-    /// Called to advise the domain that a local window is closing.
-    /// This allows the domain the opportunity to eg: detach/hide
-    /// its tabs/panes rather than actually killing them off
-    fn local_window_is_closing(&self, _window_id: WindowId) {}
 }
 impl_downcast!(Domain);
 
@@ -193,7 +210,7 @@ impl LocalDomain {
 
     fn resolve_wsl_domain(&self) -> Option<WslDomain> {
         config::configuration()
-            .wsl_domains
+            .wsl_domains()
             .iter()
             .find(|d| d.name == self.name)
             .cloned()
@@ -214,6 +231,16 @@ impl LocalDomain {
 
     pub fn new_exec_domain(exec_domain: ExecDomain) -> anyhow::Result<Self> {
         Self::new(&exec_domain.name)
+    }
+
+    pub fn new_serial_domain(serial_domain: SerialDomain) -> anyhow::Result<Self> {
+        let port = serial_domain.port.as_ref().unwrap_or(&serial_domain.name);
+        let mut serial = portable_pty::serial::SerialTty::new(&port);
+        if let Some(baud) = serial_domain.baud {
+            serial.set_baud_rate(serial::BaudRate::from_speed(baud));
+        }
+        let pty_system = Box::new(serial);
+        Ok(Self::with_pty_system(&serial_domain.name, pty_system))
     }
 
     #[cfg(unix)]
@@ -582,6 +609,10 @@ impl Domain for LocalDomain {
 
     async fn attach(&self, _window_id: Option<WindowId>) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    fn detachable(&self) -> bool {
+        false
     }
 
     fn detach(&self) -> anyhow::Result<()> {

@@ -1,3 +1,7 @@
+---
+tags:
+  - tab_bar
+---
 # `tab_max_width`
 
 Specifies the maximum width that a tab can have in the
@@ -7,7 +11,5 @@ using fancy tab mode.
 Defaults to 16 glyphs in width.
 
 ```lua
-return {
-  tab_max_width = 16,
-}
+config.tab_max_width = 16
 ```

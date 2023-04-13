@@ -1,6 +1,10 @@
+---
+tags:
+  - keys
+---
 # `treat_left_ctrlalt_as_altgr = false`
 
-*since: 20210314-114017-04b7cedd*
+{{since('20210314-114017-04b7cedd')}}
 
 If you are using a layout with an *AltGr* key, you may experience issues
 when running inside a VNC session, because VNC emulates the AltGr keypresses
@@ -11,7 +15,5 @@ To fix this behavior you can tell WezTerm to treat left *Ctrl-Alt* keys as
 bindings using separate Ctrl and Alt won't be triggered anymore.
 
 ```lua
-return {
-  treat_left_ctrlalt_as_altgr = true,
-}
+config.treat_left_ctrlalt_as_altgr = true
 ```

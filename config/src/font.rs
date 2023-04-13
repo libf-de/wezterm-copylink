@@ -218,10 +218,18 @@ impl FontWeight {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromDynamic, ToDynamic)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, FromDynamic, ToDynamic)]
+pub enum DisplayPixelGeometry {
+    #[default]
+    RGB,
+    BGR,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, FromDynamic, ToDynamic)]
 pub enum FreeTypeLoadTarget {
     /// This corresponds to the default hinting algorithm, optimized
     /// for standard gray-level rendering.
+    #[default]
     Normal,
     /// A lighter hinting algorithm for non-monochrome modes. Many
     /// generated glyphs are more fuzzy but better resemble its
@@ -236,12 +244,6 @@ pub enum FreeTypeLoadTarget {
     HorizontalLcd,
     /// A variant of Normal optimized for vertically decimated LCD displays.
     VerticalLcd,
-}
-
-impl Default for FreeTypeLoadTarget {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 bitflags! {
@@ -267,15 +269,15 @@ bitflags! {
     }
 }
 
-impl Into<String> for FreeTypeLoadFlags {
-    fn into(self) -> String {
-        self.to_string()
+impl From<FreeTypeLoadFlags> for String {
+    fn from(val: FreeTypeLoadFlags) -> Self {
+        val.to_string()
     }
 }
 
-impl Into<String> for &FreeTypeLoadFlags {
-    fn into(self) -> String {
-        self.to_string()
+impl From<&FreeTypeLoadFlags> for String {
+    fn from(val: &FreeTypeLoadFlags) -> Self {
+        val.to_string()
     }
 }
 
@@ -566,7 +568,7 @@ impl TextStyle {
         // Insert our bundled default JetBrainsMono as a fallback
         // in case their preference doesn't match anything.
         // But don't add it if it is already their preference.
-        if font.iter().position(|f| *f == default_font).is_none() {
+        if !font.iter().any(|f| *f == default_font) {
             default_font.is_fallback = true;
             font.push(default_font);
         }
@@ -662,27 +664,17 @@ impl Default for FontLocatorSelection {
     }
 }
 
-#[derive(Debug, Clone, Copy, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, FromDynamic, ToDynamic, Default)]
 pub enum FontRasterizerSelection {
+    #[default]
     FreeType,
 }
 
-impl Default for FontRasterizerSelection {
-    fn default() -> Self {
-        FontRasterizerSelection::FreeType
-    }
-}
-
-#[derive(Debug, Clone, Copy, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, FromDynamic, ToDynamic, Default)]
 pub enum FontShaperSelection {
     Allsorts,
+    #[default]
     Harfbuzz,
-}
-
-impl Default for FontShaperSelection {
-    fn default() -> Self {
-        FontShaperSelection::Harfbuzz
-    }
 }
 
 #[cfg(test)]

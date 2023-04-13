@@ -4,18 +4,16 @@ use crate::{
     Config, FontAttributes, FontStretch, FontStyle, FontWeight, FreeTypeLoadTarget, RgbaColor,
     TextStyle,
 };
-use anyhow::anyhow;
-use luahelper::{dynamic_to_lua_value, from_lua_value_dynamic, lua_value_to_dynamic, to_lua};
-use mlua::{
-    FromLua, Lua, MetaMethod, Table, ToLuaMulti, UserData, UserDataMethods, Value, Variadic,
-};
+use anyhow::{anyhow, Context};
+use luahelper::{from_lua_value_dynamic, lua_value_to_dynamic, to_lua};
+use mlua::{FromLua, Lua, Table, ToLuaMulti, Value, Variadic};
 use ordered_float::NotNan;
 use portable_pty::CommandBuilder;
 use std::convert::TryFrom;
 use std::path::Path;
 use std::sync::Mutex;
 use wezterm_dynamic::{
-    FromDynamic, FromDynamicOptions, Object, ToDynamic, UnknownFieldAction, Value as DynValue,
+    FromDynamic, FromDynamicOptions, ToDynamic, UnknownFieldAction, Value as DynValue,
 };
 
 pub use mlua;
@@ -74,131 +72,117 @@ pub fn get_or_create_sub_module<'lua>(
     }
 }
 
-#[derive(Default)]
-struct ConfigHelper {
-    object: Object,
-    options: FromDynamicOptions,
+fn config_builder_set_strict_mode<'lua>(
+    _lua: &'lua Lua,
+    (myself, strict): (Table, bool),
+) -> mlua::Result<()> {
+    let mt = myself
+        .get_metatable()
+        .ok_or_else(|| mlua::Error::external("impossible that we have no metatable"))?;
+    mt.set("__strict_mode", strict)
 }
 
-impl ConfigHelper {
-    fn new() -> Self {
-        Self {
-            object: Object::default(),
-            options: FromDynamicOptions {
-                unknown_fields: UnknownFieldAction::Deny,
-                deprecated_fields: UnknownFieldAction::Warn,
-            },
-        }
+fn config_builder_index<'lua>(
+    _lua: &'lua Lua,
+    (myself, key): (Table<'lua>, mlua::Value<'lua>),
+) -> mlua::Result<mlua::Value<'lua>> {
+    let mt = myself
+        .get_metatable()
+        .ok_or_else(|| mlua::Error::external("impossible that we have no metatable"))?;
+    match mt.get(key.clone()) {
+        Ok(value) => Ok(value),
+        _ => myself.raw_get(key),
     }
+}
 
-    fn index<'lua>(&self, lua: &'lua Lua, key: String) -> mlua::Result<Value<'lua>> {
-        match self.object.get_by_str(&key) {
-            Some(value) => dynamic_to_lua_value(lua, value.clone()),
-            None => Ok(Value::Nil),
+fn config_builder_new_index<'lua>(
+    lua: &'lua Lua,
+    (myself, key, value): (Table, String, Value),
+) -> mlua::Result<()> {
+    let stub_config = lua.create_table()?;
+    stub_config.set(key.clone(), value.clone())?;
+
+    let dvalue = lua_value_to_dynamic(Value::Table(stub_config)).map_err(|e| {
+        mlua::Error::FromLuaConversionError {
+            from: "table",
+            to: "Config",
+            message: Some(format!("lua_value_to_dynamic: {e}")),
         }
-    }
+    })?;
 
-    fn new_index<'lua>(&mut self, lua: &'lua Lua, key: String, value: Value) -> mlua::Result<()> {
-        let stub_config = lua.create_table()?;
-        stub_config.set(key.clone(), value.clone())?;
+    let mt = myself
+        .get_metatable()
+        .ok_or_else(|| mlua::Error::external("impossible that we have no metatable"))?;
+    let strict = match mt.get("__strict_mode") {
+        Ok(Value::Boolean(b)) => b,
+        _ => true,
+    };
 
-        let value = lua_value_to_dynamic(Value::Table(stub_config)).map_err(|e| {
-            mlua::Error::FromLuaConversionError {
-                from: "table",
-                to: "Config",
-                message: Some(format!("lua_value_to_dynamic: {e}")),
-            }
-        })?;
+    let options = FromDynamicOptions {
+        unknown_fields: if strict {
+            UnknownFieldAction::Deny
+        } else {
+            UnknownFieldAction::Warn
+        },
+        deprecated_fields: UnknownFieldAction::Warn,
+    };
 
-        let config_object = Config::from_dynamic(&value, self.options).map_err(|e| {
-            mlua::Error::FromLuaConversionError {
-                from: "table",
-                to: "Config",
-                message: Some(format!("Config::from_dynamic: {e}")),
-            }
-        })?;
+    let config_object = Config::from_dynamic(&dvalue, options).map_err(|e| {
+        mlua::Error::FromLuaConversionError {
+            from: "table",
+            to: "Config",
+            message: Some(format!("Config::from_dynamic: {e}")),
+        }
+    })?;
 
-        match config_object.to_dynamic() {
-            DynValue::Object(obj) => {
-                match obj.get_by_str(&key) {
-                    None => {
-                        // Show a stack trace to help them figure out where they made
-                        // a mistake. This path is taken when they are not in strict
-                        // mode, and we want to print some more context after the from_dynamic
-                        // impl has logged a warning and suggested alternative field names.
-                        let mut message =
-                            format!("Attempted to set invalid config option `{key}` at:\n");
-                        // Start at frame 1, our caller, as the frame for invoking this
-                        // metamethod is not interesting
-                        for i in 1.. {
-                            if let Some(debug) = lua.inspect_stack(i) {
-                                let names = debug.names();
-                                let name = names.name.map(|b| String::from_utf8_lossy(b));
-                                let name_what = names.name_what.map(|b| String::from_utf8_lossy(b));
+    match config_object.to_dynamic() {
+        DynValue::Object(obj) => {
+            match obj.get_by_str(&key) {
+                None => {
+                    // Show a stack trace to help them figure out where they made
+                    // a mistake. This path is taken when they are not in strict
+                    // mode, and we want to print some more context after the from_dynamic
+                    // impl has logged a warning and suggested alternative field names.
+                    let mut message =
+                        format!("Attempted to set invalid config option `{key}` at:\n");
+                    // Start at frame 1, our caller, as the frame for invoking this
+                    // metamethod is not interesting
+                    for i in 1.. {
+                        if let Some(debug) = lua.inspect_stack(i) {
+                            let names = debug.names();
+                            let name = names.name.map(String::from_utf8_lossy);
+                            let name_what = names.name_what.map(String::from_utf8_lossy);
 
-                                let dbg_source = debug.source();
-                                let source = dbg_source
-                                    .source
-                                    .and_then(|b| String::from_utf8(b.to_vec()).ok())
-                                    .unwrap_or_else(String::new);
-                                let func_name = match (name, name_what) {
-                                    (Some(name), Some(name_what)) => format!("{name_what} {name}"),
-                                    (Some(name), None) => format!("{name}"),
-                                    _ => "".to_string(),
-                                };
+                            let dbg_source = debug.source();
+                            let source = dbg_source
+                                .source
+                                .and_then(|b| String::from_utf8(b.to_vec()).ok())
+                                .unwrap_or_default();
+                            let func_name = match (name, name_what) {
+                                (Some(name), Some(name_what)) => {
+                                    format!("{name_what} {name}")
+                                }
+                                (Some(name), None) => format!("{name}"),
+                                _ => "".to_string(),
+                            };
 
-                                let line = debug.curr_line();
-                                message
-                                    .push_str(&format!("    [{i}] {source}:{line} {func_name}\n"));
-                            } else {
-                                break;
-                            }
+                            let line = debug.curr_line();
+                            message.push_str(&format!("    [{i}] {source}:{line} {func_name}\n"));
+                        } else {
+                            break;
                         }
-                        wezterm_dynamic::Error::warn(message);
                     }
-                    Some(value) => {
-                        self.object.insert(DynValue::String(key), value.clone());
-                    }
-                };
-                Ok(())
-            }
-            _ => Err(mlua::Error::external(
-                "computed config object is, impossibly, not an object",
-            )),
-        }
-    }
-}
-
-impl UserData for ConfigHelper {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_method_mut(
-            MetaMethod::NewIndex,
-            |lua, this, (key, value): (String, Value)| -> mlua::Result<()> {
-                Self::new_index(this, lua, key, value)
-            },
-        );
-
-        methods.add_meta_method(
-            MetaMethod::Index,
-            |lua, this, key: String| -> mlua::Result<Value> { Self::index(this, lua, key) },
-        );
-
-        methods.add_meta_method(
-            MetaMethod::Custom("__wezterm_to_dynamic".into()),
-            |lua, this, _: ()| -> mlua::Result<Value> {
-                let value = DynValue::Object(this.object.clone());
-                to_lua(lua, value)
-            },
-        );
-
-        methods.add_method_mut("set_strict_mode", |_, this, strict: bool| {
-            this.options.unknown_fields = if strict {
-                UnknownFieldAction::Deny
-            } else {
-                UnknownFieldAction::Warn
+                    wezterm_dynamic::Error::warn(message);
+                }
+                Some(_dvalue) => {
+                    myself.raw_set(key, value)?;
+                }
             };
             Ok(())
-        });
+        }
+        _ => Err(mlua::Error::external(
+            "computed config object is, impossibly, not an object",
+        )),
     }
 }
 
@@ -237,8 +221,8 @@ pub fn make_lua_context(config_file: &Path) -> anyhow::Result<Lua> {
         // This table will be the `wezterm` module in the script
         let wezterm_mod = get_or_create_module(&lua, "wezterm")?;
 
-        let package: Table = globals.get("package")?;
-        let package_path: String = package.get("path")?;
+        let package: Table = globals.get("package").context("get _G.package")?;
+        let package_path: String = package.get("path").context("get package.path as String")?;
         let mut path_array: Vec<String> = package_path.split(";").map(|s| s.to_owned()).collect();
 
         fn prefix_path(array: &mut Vec<String>, path: &Path) {
@@ -247,7 +231,9 @@ pub fn make_lua_context(config_file: &Path) -> anyhow::Result<Lua> {
         }
 
         prefix_path(&mut path_array, &crate::HOME_DIR.join(".wezterm"));
-        prefix_path(&mut path_array, &crate::CONFIG_DIR);
+        for dir in crate::CONFIG_DIRS.iter() {
+            prefix_path(&mut path_array, dir);
+        }
         path_array.insert(
             2,
             format!("{}/plugins/?/plugin/init.lua", crate::RUNTIME_DIR.display()),
@@ -255,10 +241,13 @@ pub fn make_lua_context(config_file: &Path) -> anyhow::Result<Lua> {
 
         if let Ok(exe) = std::env::current_exe() {
             if let Some(path) = exe.parent() {
-                wezterm_mod.set(
-                    "executable_dir",
-                    path.to_str().ok_or_else(|| anyhow!("path is not UTF-8"))?,
-                )?;
+                wezterm_mod
+                    .set(
+                        "executable_dir",
+                        path.to_str()
+                            .ok_or_else(|| anyhow!("current_exe path is not UTF-8"))?,
+                    )
+                    .context("set wezterm.executable_dir")?;
                 if cfg!(windows) {
                     // For a portable windows install, force in this path ahead
                     // of the rest
@@ -290,11 +279,26 @@ end
         "#,
         )
         .set_name("=searcher")?
-        .eval()?;
+        .eval()
+        .context("replace package.searchers")?;
 
         wezterm_mod.set(
             "config_builder",
-            lua.create_function(|_, _: ()| Ok(ConfigHelper::new()))?,
+            lua.create_function(|lua, _: ()| {
+                let config = lua.create_table()?;
+                let mt = lua.create_table()?;
+
+                mt.set("__index", lua.create_function(config_builder_index)?)?;
+                mt.set("__newindex", lua.create_function(config_builder_new_index)?)?;
+                mt.set(
+                    "set_strict_mode",
+                    lua.create_function(config_builder_set_strict_mode)?,
+                )?;
+
+                config.set_metatable(Some(mt));
+
+                Ok(config)
+            })?,
         )?;
 
         wezterm_mod.set(
@@ -304,13 +308,17 @@ end
                 Ok(())
             })?,
         )?;
-        wezterm_mod.set("config_file", config_file_str)?;
-        wezterm_mod.set(
-            "config_dir",
-            config_dir
-                .to_str()
-                .ok_or_else(|| anyhow!("config dir path is not UTF-8"))?,
-        )?;
+        wezterm_mod
+            .set("config_file", config_file_str)
+            .context("set wezterm.config_file")?;
+        wezterm_mod
+            .set(
+                "config_dir",
+                config_dir
+                    .to_str()
+                    .ok_or_else(|| anyhow!("config dir path is not UTF-8"))?,
+            )
+            .context("set wezterm.config_dir")?;
 
         lua.set_named_registry_value("wezterm-watch-paths", Vec::<String>::new())?;
         wezterm_mod.set(
@@ -338,6 +346,12 @@ end
         )?;
         wezterm_mod.set("hostname", lua.create_function(hostname)?)?;
         wezterm_mod.set("action", luahelper::enumctor::Enum::<KeyAssignment>::new())?;
+        wezterm_mod.set(
+            "has_action",
+            lua.create_function(|_lua, name: String| {
+                Ok(KeyAssignment::variants().contains(&name.as_str()))
+            })?,
+        )?;
 
         lua.set_named_registry_value(LUA_REGISTRY_USER_CALLBACK_COUNT, 0)?;
         wezterm_mod.set("action_callback", lua.create_function(action_callback)?)?;
@@ -351,17 +365,27 @@ end
         wezterm_mod.set("shell_quote_arg", lua.create_function(shell_quote_arg)?)?;
         wezterm_mod.set("shell_split", lua.create_function(shell_split)?)?;
 
+        wezterm_mod.set(
+            "default_hyperlink_rules",
+            lua.create_function(move |lua, ()| {
+                let rules = crate::config::default_hyperlink_rules();
+                Ok(to_lua(lua, rules))
+            })?,
+        )?;
+
         // Define our own os.getenv function that knows how to resolve current
         // environment values from eg: the registry on Windows, or for
         // the current SHELL value on unix, even if the user has changed
         // those values since wezterm was started
         get_or_create_module(&lua, "os")?.set("getenv", lua.create_function(getenv)?)?;
 
-        package.set("path", path_array.join(";"))?;
+        package
+            .set("path", path_array.join(";"))
+            .context("assign package.path")?;
     }
 
     for func in SETUP_FUNCS.lock().unwrap().iter() {
-        func(&lua)?;
+        func(&lua).context("calling SETUP_FUNCS")?;
     }
 
     Ok(lua)
@@ -395,14 +419,14 @@ fn shell_join_args<'lua>(_: &'lua Lua, args: Vec<String>) -> mlua::Result<String
 }
 
 fn shell_quote_arg<'lua>(_: &'lua Lua, arg: String) -> mlua::Result<String> {
-    Ok(shlex::quote(&arg).into_owned().to_string())
+    Ok(shlex::quote(&arg).into_owned())
 }
 
 /// Returns the system hostname.
 /// Errors may occur while retrieving the hostname from the system,
 /// or if the hostname isn't a UTF-8 string.
 fn hostname<'lua>(_: &'lua Lua, _: ()) -> mlua::Result<String> {
-    let hostname = hostname::get().map_err(|e| mlua::Error::external(e))?;
+    let hostname = hostname::get().map_err(mlua::Error::external)?;
     match hostname.to_str() {
         Some(hostname) => Ok(hostname.to_owned()),
         None => Err(mlua::Error::external(anyhow!("hostname isn't UTF-8"))),
@@ -557,9 +581,7 @@ fn font<'lua>(
             freetype_load_target: attrs.freetype_load_target,
             freetype_render_target: attrs.freetype_render_target,
             freetype_load_flags: match attrs.freetype_load_flags {
-                Some(flags) => {
-                    Some(TryFrom::try_from(flags).map_err(|e| mlua::Error::external(e))?)
-                }
+                Some(flags) => Some(TryFrom::try_from(flags).map_err(mlua::Error::external)?),
                 None => None,
             },
             scale: attrs.scale,
@@ -608,9 +630,7 @@ fn font_with_fallback<'lua>(
                 freetype_load_target: attrs.freetype_load_target,
                 freetype_render_target: attrs.freetype_render_target,
                 freetype_load_flags: match attrs.freetype_load_flags {
-                    Some(flags) => {
-                        Some(TryFrom::try_from(flags).map_err(|e| mlua::Error::external(e))?)
-                    }
+                    Some(flags) => Some(TryFrom::try_from(flags).map_err(mlua::Error::external)?),
                     None => None,
                 },
                 scale: attrs.scale,
@@ -725,6 +745,14 @@ pub fn register_event<'lua>(
     }
 }
 
+const IS_EVENT: &str = "wezterm-is-event-emission";
+
+/// Returns true if the current lua context is being called as part
+/// of an emit_event call.
+pub fn is_event_emission<'lua>(lua: &'lua Lua) -> mlua::Result<bool> {
+    lua.named_registry_value(IS_EVENT)
+}
+
 /// This implements `wezterm.emit`.
 /// The first parameter to emit is the name of a signal that may or may not
 /// have previously been registered via `wezterm.on`.
@@ -741,6 +769,8 @@ pub async fn emit_event<'lua>(
     lua: &'lua Lua,
     (name, args): (String, mlua::MultiValue<'lua>),
 ) -> mlua::Result<bool> {
+    lua.set_named_registry_value(IS_EVENT, true)?;
+
     let decorated_name = format!("wezterm-event-{}", name);
     let tbl: mlua::Value = lua.named_registry_value(&decorated_name)?;
     match tbl {
@@ -820,7 +850,7 @@ fn utf16_to_utf8<'lua>(_: &'lua Lua, text: mlua::String) -> mlua::Result<String>
     let wide: &[u16] =
         unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
 
-    String::from_utf16(wide).map_err(|e| mlua::Error::external(e))
+    String::from_utf16(wide).map_err(mlua::Error::external)
 }
 
 pub fn add_to_config_reload_watch_list<'lua>(

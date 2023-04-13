@@ -1,6 +1,6 @@
 # `domain:is_spawnable()`
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 Returns `false` if this domain will never be able to spawn a new pane/tab/window, `true` otherwise.
 

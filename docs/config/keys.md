@@ -5,17 +5,13 @@ The default key table assignments can be overridden or extended using the
 disable a default assignment like this:
 
 ```lua
-local wezterm = require 'wezterm'
-
-return {
-  keys = {
-    -- Turn off the default CMD-m Hide action, allowing CMD-m to
-    -- be potentially recognized and handled by the tab
-    {
-      key = 'm',
-      mods = 'CMD',
-      action = wezterm.action.DisableDefaultAssignment,
-    },
+config.keys = {
+  -- Turn off the default CMD-m Hide action, allowing CMD-m to
+  -- be potentially recognized and handled by the tab
+  {
+    key = 'm',
+    mods = 'CMD',
+    action = wezterm.action.DisableDefaultAssignment,
   },
 }
 ```
@@ -68,7 +64,7 @@ Pay attention to the case of the text that you use and the state of the `SHIFT` 
 
 ### Physical vs Mapped Key Assignments
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 The `key` value can refer either to the physical position of a key on an ANSI
 US keyboard or to the post-keyboard-layout-mapped value produced by a key
@@ -93,7 +89,7 @@ your config, you will need to change it to either
 `{key="N", mods="CMD|SHIFT", ..}` or `{key="mapped:N", mods="CMD", ..}`
 in order to continue to respect the `SHIFT` modifier.
 
-*Since: 20220408-101518-b908e2dd*
+{{since('20220408-101518-b908e2dd')}}
 
 A new `key_map_preference` option controls how keys without an explicit `phys:`
 or `mapped:` prefix are treated. If `key_map_preference = "Mapped"` (the
@@ -121,7 +117,7 @@ rather than one of the other key values.
 
 ### Leader Key
 
-*Since: 20201031-154415-9614e117*
+{{since('20201031-154415-9614e117')}}
 
 A *leader* key is a a modal modifier key.  If leader is specified in the
 configuration then pressing that key combination will enable a virtual `LEADER`
@@ -142,30 +138,26 @@ milliseconds).  While `LEADER` is active, the `|` key (with no other modifiers)
 will trigger the current pane to be split.
 
 ```lua
-local wezterm = require 'wezterm'
-
-return {
-  -- timeout_milliseconds defaults to 1000 and can be omitted
-  leader = { key = 'a', mods = 'CTRL', timeout_milliseconds = 1000 },
-  keys = {
-    {
-      key = '|',
-      mods = 'LEADER|SHIFT',
-      action = wezterm.action.SplitHorizontal { domain = 'CurrentPaneDomain' },
-    },
-    -- Send "CTRL-A" to the terminal when pressing CTRL-A, CTRL-A
-    {
-      key = 'a',
-      mods = 'LEADER|CTRL',
-      action = wezterm.action.SendString '\x01',
-    },
+-- timeout_milliseconds defaults to 1000 and can be omitted
+config.leader = { key = 'a', mods = 'CTRL', timeout_milliseconds = 1000 }
+config.keys = {
+  {
+    key = '|',
+    mods = 'LEADER|SHIFT',
+    action = wezterm.action.SplitHorizontal { domain = 'CurrentPaneDomain' },
+  },
+  -- Send "CTRL-A" to the terminal when pressing CTRL-A, CTRL-A
+  {
+    key = 'a',
+    mods = 'LEADER|CTRL',
+    action = wezterm.action.SendString '\x01',
   },
 }
 ```
 
 ### VoidSymbol
 
-*Since: 20210814-124438-54e29167*
+{{since('20210814-124438-54e29167')}}
 
 On X11 systems, If you decide to change certain keys on the keyboard to
 `VoidSymbol` (like `CapsLock`), then you can utilize it as a `LEADER` or any
@@ -174,23 +166,19 @@ uses `CapsLock` as a `LEADER` without it affecting the shift / capital state as
 long as you have `setxkbmap -option caps:none` configured.
 
 ```lua
-local wezterm = require 'wezterm'
-
-return {
-  -- timeout_milliseconds defaults to 1000 and can be omitted
-  -- for this example use `setxkbmap -option caps:none` in your terminal.
-  leader = { key = 'VoidSymbol', mods = '', timeout_milliseconds = 1000 },
-  keys = {
-    {
-      key = '|',
-      mods = 'LEADER|SHIFT',
-      action = wezterm.action.SplitHorizontal { domain = 'CurrentPaneDomain' },
-    },
-    {
-      key = '-',
-      mods = 'LEADER',
-      action = wezterm.action.SplitVertical { domain = 'CurrentPaneDomain' },
-    },
+-- timeout_milliseconds defaults to 1000 and can be omitted
+-- for this example use `setxkbmap -option caps:none` in your terminal.
+config.leader = { key = 'VoidSymbol', mods = '', timeout_milliseconds = 1000 }
+config.keys = {
+  {
+    key = '|',
+    mods = 'LEADER|SHIFT',
+    action = wezterm.action.SplitHorizontal { domain = 'CurrentPaneDomain' },
+  },
+  {
+    key = '-',
+    mods = 'LEADER',
+    action = wezterm.action.SplitVertical { domain = 'CurrentPaneDomain' },
   },
 }
 ```

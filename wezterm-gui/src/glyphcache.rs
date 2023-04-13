@@ -7,16 +7,22 @@ use ::window::color::SrgbaPixel;
 use ::window::{Point, Rect};
 use config::{AllowSquareGlyphOverflow, TextStyle};
 use euclid::num::Zero;
-use lfucache::LfuCacheU64;
+use image::io::Limits;
+use image::{AnimationDecoder, Frame, Frames, ImageDecoder, ImageFormat, ImageResult};
+use lfucache::LfuCache;
+use once_cell::sync::Lazy;
 use ordered_float::NotNan;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::{Read, Seek};
 use std::rc::Rc;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, MutexGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use termwiz::color::RgbColor;
 use termwiz::image::{ImageData, ImageDataType};
 use termwiz::surface::CursorShape;
+use wezterm_blob_leases::{BlobLease, BlobManager, BoxedReader};
 use wezterm_font::units::*;
 use wezterm_font::{FontConfiguration, GlyphInfo, LoadedFont, LoadedFontId};
 use wezterm_term::Underline;
@@ -176,7 +182,7 @@ impl<'a> BitmapImage for DecodedImageHandle<'a> {
         match &*self.h {
             ImageDataType::Rgba8 { data, .. } => data.as_ptr(),
             ImageDataType::AnimRgba8 { frames, .. } => frames[self.current_frame].as_ptr(),
-            ImageDataType::EncodedFile(_) => unreachable!(),
+            ImageDataType::EncodedLease(_) | ImageDataType::EncodedFile(_) => unreachable!(),
         }
     }
 
@@ -188,8 +194,230 @@ impl<'a> BitmapImage for DecodedImageHandle<'a> {
         match &*self.h {
             ImageDataType::Rgba8 { width, height, .. }
             | ImageDataType::AnimRgba8 { width, height, .. } => (*width as usize, *height as usize),
-            ImageDataType::EncodedFile(_) => unreachable!(),
+            ImageDataType::EncodedLease(_) | ImageDataType::EncodedFile(_) => unreachable!(),
         }
+    }
+}
+
+#[derive(Clone)]
+struct DecodedFrame {
+    lease: BlobLease,
+    duration: Duration,
+    width: usize,
+    height: usize,
+}
+
+struct FrameDecoder {}
+
+impl FrameDecoder {
+    pub fn start(lease: BlobLease) -> anyhow::Result<Receiver<DecodedFrame>> {
+        let (tx, rx) = sync_channel(2);
+
+        let buf_reader = lease.get_reader()?;
+        let reader = image::io::Reader::new(buf_reader).with_guessed_format()?;
+        let format = reader
+            .format()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine image format"))?;
+
+        std::thread::spawn(move || {
+            if let Err(err) = Self::run_decoder_thread(reader, format, tx) {
+                if err
+                    .downcast_ref::<std::sync::mpsc::SendError<DecodedFrame>>()
+                    .is_none()
+                {
+                    log::error!("Error decoding image: {err:#}");
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
+    fn run_decoder_thread(
+        reader: image::io::Reader<BoxedReader>,
+        format: ImageFormat,
+        tx: SyncSender<DecodedFrame>,
+    ) -> anyhow::Result<()> {
+        let start = Instant::now();
+        let limits = Limits::default();
+        let mut frames = match format {
+            ImageFormat::Gif => {
+                let mut reader = reader.into_inner();
+                reader.rewind()?;
+                let decoder = image::codecs::gif::GifDecoder::with_limits(reader, limits)?;
+                decoder.into_frames()
+            }
+            ImageFormat::Png => {
+                let mut reader = reader.into_inner();
+                reader.rewind()?;
+                let decoder = image::codecs::png::PngDecoder::with_limits(reader, limits.clone())?;
+                if decoder.is_apng() {
+                    decoder.apng().into_frames()
+                } else {
+                    let size = decoder.total_bytes() as usize;
+                    let mut buf = vec![0u8; size];
+                    let (width, height) = decoder.dimensions();
+                    let mut reader = decoder.into_reader()?;
+                    reader.read(&mut buf)?;
+                    let buf = image::RgbaImage::from_raw(width, height, buf).ok_or_else(|| {
+                        anyhow::anyhow!("inconsistent {width}x{height} -> {size}")
+                    })?;
+                    let delay = image::Delay::from_numer_denom_ms(u32::MAX, 1);
+                    let frame = Frame::from_parts(buf, 0, 0, delay);
+                    Frames::new(Box::new(std::iter::once(ImageResult::Ok(frame))))
+                }
+            }
+            ImageFormat::WebP => {
+                let mut reader = reader.into_inner();
+                reader.rewind()?;
+                let mut decoder = image::codecs::webp::WebPDecoder::new(reader)?;
+                decoder.set_limits(limits)?;
+                decoder.into_frames()
+            }
+            _ => {
+                let buf = reader.decode()?;
+                let delay = image::Delay::from_numer_denom_ms(u32::MAX, 1);
+                let frame = Frame::from_parts(buf.into_rgba8(), 0, 0, delay);
+                Frames::new(Box::new(std::iter::once(ImageResult::Ok(frame))))
+            }
+        };
+
+        let frame = frames
+            .next()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Image format is not fully supported by \
+                    https://github.com/image-rs/image/blob/master/README.md#supported-image-formats")
+            })?;
+        let frame = frame?;
+
+        let mut decoded_frames = vec![];
+        let (width, height) = frame.buffer().dimensions();
+        let width = width as usize;
+        let height = height as usize;
+
+        let duration: Duration = frame.delay().into();
+        log::debug!("first frame took {:?} to decode.", start.elapsed());
+
+        let data = frame.into_buffer().into_raw();
+        let lease = BlobManager::store(&data)?;
+        let decoded_frame = DecodedFrame {
+            lease,
+            duration,
+            width,
+            height,
+        };
+        tx.send(decoded_frame.clone())?;
+        decoded_frames.push(decoded_frame);
+
+        while let Some(frame) = frames.next() {
+            let frame = frame?;
+
+            let duration: Duration = frame.delay().into();
+            let data = frame.into_buffer().into_raw();
+            let lease = BlobManager::store(&data)?;
+
+            let decoded_frame = DecodedFrame {
+                lease,
+                duration,
+                width,
+                height,
+            };
+            tx.send(decoded_frame.clone())?;
+            decoded_frames.push(decoded_frame);
+        }
+
+        drop(frames);
+
+        let elapsed = start.elapsed();
+        let fps = decoded_frames.len() as f32 / elapsed.as_secs_f32();
+
+        log::debug!(
+            "decoded {} frames, {} bytes in {elapsed:?}, {fps} fps",
+            decoded_frames.len(),
+            decoded_frames.len() * width * height * 4
+        );
+        Ok(())
+    }
+}
+
+enum FrameSource {
+    Decoder(Receiver<DecodedFrame>),
+    FrameIndex(usize),
+}
+
+struct FrameState {
+    source: FrameSource,
+    current_frame: DecodedFrame,
+    frames: Vec<DecodedFrame>,
+}
+
+impl FrameState {
+    fn new(rx: Receiver<DecodedFrame>) -> Self {
+        static EMPTY: Lazy<BlobLease> = Lazy::new(|| BlobManager::store(&[0u8; 4]).unwrap());
+
+        Self {
+            source: FrameSource::Decoder(rx),
+            frames: vec![],
+            current_frame: DecodedFrame {
+                lease: EMPTY.clone(),
+                width: 1,
+                height: 1,
+                duration: Duration::from_millis(0),
+            },
+        }
+    }
+
+    fn load_next_frame(&mut self) -> bool {
+        match &mut self.source {
+            FrameSource::Decoder(rx) => match rx.try_recv() {
+                Ok(frame) => {
+                    self.frames.push(frame.clone());
+                    self.current_frame = frame;
+                    true
+                }
+                Err(TryRecvError::Empty) => false,
+                Err(TryRecvError::Disconnected) => {
+                    self.source = FrameSource::FrameIndex(0);
+                    if self.frames.is_empty() {
+                        log::warn!("decoder thread terminated");
+                        self.current_frame.duration = Duration::from_secs(86400);
+                        self.frames.push(self.current_frame.clone());
+                        false
+                    } else if self.frames.len() == 1 {
+                        // If there's only a single frame, we may as well ensure
+                        // that it has a long duration so that we don't waste
+                        // resources ticking to the same frame over and over
+                        self.frames[0].duration = Duration::from_secs(86400);
+                        true
+                    } else {
+                        true
+                    }
+                }
+            },
+            FrameSource::FrameIndex(idx) => {
+                *idx = *idx + 1;
+                if *idx >= self.frames.len() {
+                    *idx = 0;
+                }
+                self.current_frame = self.frames[*idx].clone();
+                true
+            }
+        }
+    }
+
+    fn frame_duration(&self) -> Duration {
+        self.current_frame.duration
+    }
+
+    fn frame_hash(&self) -> [u8; 32] {
+        self.current_frame.lease.content_id().as_hash_bytes()
+    }
+}
+
+impl std::fmt::Debug for FrameState {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fmt.debug_struct("FrameState").finish()
     }
 }
 
@@ -198,6 +426,7 @@ pub struct DecodedImage {
     frame_start: RefCell<Instant>,
     current_frame: RefCell<usize>,
     image: Arc<ImageData>,
+    frames: RefCell<Option<FrameState>>,
 }
 
 impl DecodedImage {
@@ -208,15 +437,37 @@ impl DecodedImage {
             frame_start: RefCell::new(Instant::now()),
             current_frame: RefCell::new(0),
             image: Arc::new(image),
+            frames: RefCell::new(None),
+        }
+    }
+
+    fn start_frame_decoder(lease: BlobLease, image_data: &Arc<ImageData>) -> Self {
+        match FrameDecoder::start(lease.clone()) {
+            Ok(rx) => Self {
+                frame_start: RefCell::new(Instant::now()),
+                current_frame: RefCell::new(0),
+                image: Arc::clone(image_data),
+                frames: RefCell::new(Some(FrameState::new(rx))),
+            },
+            Err(err) => {
+                log::error!("failed to start FrameDecoder: {err:#}");
+                Self::placeholder()
+            }
         }
     }
 
     fn load(image_data: &Arc<ImageData>) -> Self {
         match &*image_data.data() {
-            ImageDataType::EncodedFile(_) => {
-                log::warn!("Unexpected ImageDataType::EncodedFile; either file is unreadable or we missed a .decode call somewhere");
-                Self::placeholder()
+            ImageDataType::EncodedLease(lease) => {
+                Self::start_frame_decoder(lease.clone(), image_data)
             }
+            ImageDataType::EncodedFile(data) => match BlobManager::store(&data) {
+                Ok(lease) => Self::start_frame_decoder(lease, image_data),
+                Err(err) => {
+                    log::error!("Unable to move file data to blob manager: {err:#}");
+                    Self::placeholder()
+                }
+            },
             ImageDataType::AnimRgba8 { durations, .. } => {
                 let current_frame = if durations.len() > 1 && durations[0].as_millis() == 0 {
                     // Skip possible 0-duration root frame
@@ -228,6 +479,7 @@ impl DecodedImage {
                     frame_start: RefCell::new(Instant::now()),
                     current_frame: RefCell::new(current_frame),
                     image: Arc::clone(image_data),
+                    frames: RefCell::new(None),
                 }
             }
 
@@ -235,6 +487,7 @@ impl DecodedImage {
                 frame_start: RefCell::new(Instant::now()),
                 current_frame: RefCell::new(0),
                 image: Arc::clone(image_data),
+                frames: RefCell::new(None),
             },
         }
     }
@@ -246,12 +499,13 @@ pub struct GlyphCache {
     glyph_cache: HashMap<GlyphKey, Rc<CachedGlyph>>,
     pub atlas: Atlas,
     pub fonts: Rc<FontConfiguration>,
-    pub image_cache: LfuCacheU64<DecodedImage>,
+    pub image_cache: LfuCache<[u8; 32], DecodedImage>,
     frame_cache: HashMap<[u8; 32], Sprite>,
     line_glyphs: HashMap<LineKey, Sprite>,
     pub block_glyphs: HashMap<SizedBlockKey, Sprite>,
     pub cursor_glyphs: HashMap<(Option<CursorShape>, u8), Sprite>,
     pub color: HashMap<(RgbColor, NotNan<f32>), Sprite>,
+    min_frame_duration: Duration,
 }
 
 impl GlyphCache {
@@ -262,7 +516,7 @@ impl GlyphCache {
         Ok(Self {
             fonts: Rc::clone(fonts),
             glyph_cache: HashMap::new(),
-            image_cache: LfuCacheU64::new(
+            image_cache: LfuCache::new(
                 "glyph_cache.image_cache.hit.rate",
                 "glyph_cache.image_cache.miss.rate",
                 |config| config.glyph_cache_image_cache_size,
@@ -274,6 +528,7 @@ impl GlyphCache {
             block_glyphs: HashMap::new(),
             cursor_glyphs: HashMap::new(),
             color: HashMap::new(),
+            min_frame_duration: Duration::from_millis(1000 / fonts.config().max_fps as u64),
         })
     }
 }
@@ -290,7 +545,7 @@ impl GlyphCache {
         Ok(Self {
             fonts: Rc::clone(fonts),
             glyph_cache: HashMap::new(),
-            image_cache: LfuCacheU64::new(
+            image_cache: LfuCache::new(
                 "glyph_cache.image_cache.hit.rate",
                 "glyph_cache.image_cache.miss.rate",
                 |config| config.glyph_cache_image_cache_size,
@@ -302,6 +557,7 @@ impl GlyphCache {
             block_glyphs: HashMap::new(),
             cursor_glyphs: HashMap::new(),
             color: HashMap::new(),
+            min_frame_duration: Duration::from_millis(1000 / fonts.config().max_fps as u64),
         })
     }
 }
@@ -558,6 +814,7 @@ impl GlyphCache {
         atlas: &mut Atlas,
         decoded: &DecodedImage,
         padding: Option<usize>,
+        min_frame_duration: Duration,
     ) -> anyhow::Result<(Sprite, Option<Instant>)> {
         let mut handle = DecodedImageHandle {
             h: decoded.image.data(),
@@ -585,7 +842,18 @@ impl GlyphCache {
                 if frames.len() > 1 {
                     let now = Instant::now();
 
-                    let mut next_due = *decoded_frame_start + durations[*decoded_current_frame];
+                    // We round up the frame duration to at least the minimum
+                    // frame duration that wezterm can use when rendering.
+                    // There's no point trying to deal with smaller intervals
+                    // because we simply cannot render them without dropping
+                    // frames.
+                    // In addition, with a 1ms frame delay, there's a good chance
+                    // that any given cell may switch to a different frame from
+                    // its neighbor while we are rendering the entire terminal
+                    // frame, so we want to avoid that.
+                    // <https://github.com/wez/wezterm/issues/3260>
+                    let mut next_due = *decoded_frame_start
+                        + durations[*decoded_current_frame].max(min_frame_duration);
                     if now >= next_due {
                         // Advance to next frame
                         *decoded_current_frame = *decoded_current_frame + 1;
@@ -597,7 +865,8 @@ impl GlyphCache {
                             }
                         }
                         *decoded_frame_start = now;
-                        next_due = *decoded_frame_start + durations[*decoded_current_frame];
+                        next_due = *decoded_frame_start
+                            + durations[*decoded_current_frame].max(min_frame_duration);
                         handle.current_frame = *decoded_current_frame;
                     }
 
@@ -616,10 +885,66 @@ impl GlyphCache {
 
                 return Ok((
                     sprite,
-                    Some(*decoded_frame_start + durations[*decoded_current_frame]),
+                    Some(
+                        *decoded_frame_start
+                            + durations[*decoded_current_frame].max(min_frame_duration),
+                    ),
                 ));
             }
-            ImageDataType::EncodedFile(_) => unreachable!(),
+            ImageDataType::EncodedLease(_) | ImageDataType::EncodedFile(_) => {
+                let mut frames = decoded.frames.borrow_mut();
+                let frames = frames.as_mut().expect("to have frames");
+
+                let mut next = None;
+                let mut decoded_frame_start = decoded.frame_start.borrow_mut();
+                let mut decoded_current_frame = decoded.current_frame.borrow_mut();
+                let now = Instant::now();
+
+                // We round up the frame duration to at least the minimum
+                // frame duration that wezterm can use when rendering.
+                // There's no point trying to deal with smaller intervals
+                // because we simply cannot render them without dropping
+                // frames.
+                // In addition, with a 1ms frame delay, there's a good chance
+                // that any given cell may switch to a different frame from
+                // its neighbor while we are rendering the entire terminal
+                // frame, so we want to avoid that.
+                // <https://github.com/wez/wezterm/issues/3260>
+                let mut next_due =
+                    *decoded_frame_start + frames.frame_duration().max(min_frame_duration);
+                if now >= next_due {
+                    // Advance to next frame
+                    if frames.load_next_frame() {
+                        *decoded_current_frame = *decoded_current_frame + 1;
+                        *decoded_frame_start = now;
+                        next_due =
+                            *decoded_frame_start + frames.frame_duration().max(min_frame_duration);
+                        handle.current_frame = *decoded_current_frame;
+                    }
+                }
+
+                next.replace(next_due);
+
+                let hash = frames.frame_hash();
+
+                if let Some(sprite) = frame_cache.get(&hash) {
+                    return Ok((sprite.clone(), next));
+                }
+
+                let frame = Image::from_raw(
+                    frames.current_frame.width,
+                    frames.current_frame.height,
+                    frames.current_frame.lease.get_data()?,
+                );
+                let sprite = atlas.allocate_with_padding(&frame, padding)?;
+
+                frame_cache.insert(hash, sprite.clone());
+
+                Ok((
+                    sprite,
+                    Some(*decoded_frame_start + frames.frame_duration().max(min_frame_duration)),
+                ))
+            }
         }
     }
 
@@ -628,15 +953,26 @@ impl GlyphCache {
         image_data: &Arc<ImageData>,
         padding: Option<usize>,
     ) -> anyhow::Result<(Sprite, Option<Instant>)> {
-        let id = image_data.id() as u64;
+        let hash = image_data.hash();
 
-        if let Some(decoded) = self.image_cache.get(&id) {
-            Self::cached_image_impl(&mut self.frame_cache, &mut self.atlas, decoded, padding)
+        if let Some(decoded) = self.image_cache.get(&hash) {
+            Self::cached_image_impl(
+                &mut self.frame_cache,
+                &mut self.atlas,
+                decoded,
+                padding,
+                self.min_frame_duration,
+            )
         } else {
             let decoded = DecodedImage::load(image_data);
-            let res =
-                Self::cached_image_impl(&mut self.frame_cache, &mut self.atlas, &decoded, padding)?;
-            self.image_cache.put(id, decoded);
+            let res = Self::cached_image_impl(
+                &mut self.frame_cache,
+                &mut self.atlas,
+                &decoded,
+                padding,
+                self.min_frame_duration,
+            )?;
+            self.image_cache.put(hash, decoded);
             Ok(res)
         }
     }

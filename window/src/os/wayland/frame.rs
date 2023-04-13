@@ -40,7 +40,7 @@ const BORDER_SIZE: u32 = 12;
 const HEADER_SIZE: u32 = 30;
 
 /// Configuration for ConceptFrame
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ConceptConfig {
     pub font_config: Option<Rc<FontConfiguration>>,
     pub config: Option<ConfigHandle>,
@@ -53,16 +53,6 @@ impl ConceptConfig {
             .as_ref()
             .map(|c| &c.window_frame)
             .unwrap_or(&self.default_frame)
-    }
-}
-
-impl Default for ConceptConfig {
-    fn default() -> ConceptConfig {
-        ConceptConfig {
-            font_config: None,
-            default_frame: WindowFrameConfig::default(),
-            config: None,
-        }
     }
 }
 
@@ -435,7 +425,7 @@ struct ShapedGlyph {
 impl ConceptFrame {
     fn reshape_title(&mut self) -> Option<()> {
         let font_config = self.config.font_config.as_ref()?;
-        let title = self.title.as_ref().map(|s| s.as_str()).unwrap_or("");
+        let title = self.title.as_deref().unwrap_or("");
         if title.is_empty() {
             self.title.take();
             self.shaped_title.take();

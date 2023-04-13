@@ -1,6 +1,6 @@
-# RotatePanes
+# `RotatePanes`
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 Rotates the sequence of panes within the active tab, preserving the sizes based on the tab positions.
 
@@ -38,18 +38,15 @@ above, the left-most pane is still the largest of the panes despite rotating
 the panes withing those placements.
 
 ```lua
-local wezterm = require 'wezterm'
 local act = wezterm.action
 
-return {
-  keys = {
-    {
-      key = 'b',
-      mods = 'CTRL',
-      action = act.RotatePanes 'CounterClockwise',
-    },
-    { key = 'n', mods = 'CTRL', action = act.RotatePanes 'Clockwise' },
+config.keys = {
+  {
+    key = 'b',
+    mods = 'CTRL',
+    action = act.RotatePanes 'CounterClockwise',
   },
+  { key = 'n', mods = 'CTRL', action = act.RotatePanes 'Clockwise' },
 }
 ```
 

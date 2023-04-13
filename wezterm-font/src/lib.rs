@@ -5,8 +5,8 @@ use crate::rasterizer::{new_rasterizer, FontRasterizer};
 use crate::shaper::{new_shaper, FontShaper, PresentationWidth};
 use anyhow::{Context, Error};
 use config::{
-    configuration, BoldBrightening, ConfigHandle, FontAttributes, FontRasterizerSelection,
-    FontStretch, FontStyle, FontWeight, TextStyle,
+    configuration, BoldBrightening, ConfigHandle, DisplayPixelGeometry, FontAttributes,
+    FontRasterizerSelection, FontStretch, FontStyle, FontWeight, TextStyle,
 };
 use rangeset::RangeSet;
 use std::cell::RefCell;
@@ -57,6 +57,7 @@ pub struct LoadedFont {
     handles: RefCell<Vec<ParsedFont>>,
     shaper: RefCell<Box<dyn FontShaper>>,
     metrics: FontMetrics,
+    pixel_geometry: DisplayPixelGeometry,
     font_size: f64,
     dpi: u32,
     font_config: Weak<FontConfigInner>,
@@ -276,7 +277,11 @@ impl LoadedFont {
                 .map_or(FontRasterizerSelection::default(), |c| {
                     c.config.borrow().font_rasterizer
                 });
-            let raster = new_rasterizer(raster_selection, &(self.handles.borrow())[fallback])?;
+            let raster = new_rasterizer(
+                raster_selection,
+                &(self.handles.borrow())[fallback],
+                self.pixel_geometry,
+            )?;
             let result = raster.rasterize_glyph(glyph_pos, self.font_size, self.dpi);
             rasterizers.insert(fallback, raster);
             result
@@ -471,7 +476,7 @@ pub struct FontConfiguration {
 impl FontConfigInner {
     /// Create a new empty configuration
     pub fn new(config: Option<ConfigHandle>, dpi: usize) -> anyhow::Result<Self> {
-        let config = config.unwrap_or_else(|| configuration());
+        let config = config.unwrap_or_else(configuration);
         let locator = new_locator(config.font_locator);
         Ok(Self {
             fonts: RefCell::new(HashMap::new()),
@@ -590,11 +595,7 @@ impl FontConfigInner {
 
         let font_size = pref_size.unwrap_or(sys_size);
 
-        let text_style = config
-            .window_frame
-            .font
-            .as_ref()
-            .unwrap_or_else(|| &sys_font);
+        let text_style = config.window_frame.font.as_ref().unwrap_or(&sys_font);
 
         let dpi = *self.dpi.borrow() as u32;
         let pixel_size = (font_size * dpi as f64 / 72.0) as u16;
@@ -623,6 +624,7 @@ impl FontConfigInner {
             text_style: text_style.clone(),
             id: alloc_font_id(),
             tried_glyphs: RefCell::new(HashSet::new()),
+            pixel_geometry: config.display_pixel_geometry,
         });
 
         Ok(loaded)
@@ -701,12 +703,12 @@ impl FontConfigInner {
         let preferred_attributes = attributes
             .iter()
             .filter(|a| !a.is_fallback)
-            .map(|a| a.clone())
+            .cloned()
             .collect::<Vec<_>>();
         let fallback_attributes = attributes
             .iter()
             .filter(|a| a.is_fallback)
-            .map(|a| a.clone())
+            .cloned()
             .collect::<Vec<_>>();
         let mut loaded = HashSet::new();
         let mut handles = vec![];
@@ -922,6 +924,7 @@ impl FontConfigInner {
             text_style: style.clone(),
             id: alloc_font_id(),
             tried_glyphs: RefCell::new(HashSet::new()),
+            pixel_geometry: config.display_pixel_geometry,
         });
 
         fonts.insert(style.clone(), Rc::clone(&loaded));

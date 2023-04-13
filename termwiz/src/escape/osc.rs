@@ -72,6 +72,7 @@ pub struct ChangeColorPair {
 }
 
 bitflags! {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection :u16{
     const NONE = 0;
     const CLIPBOARD = 1<<1;
@@ -1232,7 +1233,12 @@ pub(crate) fn base64_encode<T: AsRef<[u8]>>(s: T) -> String {
 pub(crate) fn base64_decode<T: AsRef<[u8]>>(
     s: T,
 ) -> std::result::Result<Vec<u8>, base64::DecodeError> {
-    base64::engine::general_purpose::STANDARD.decode(s)
+    use base64::engine::{GeneralPurpose, GeneralPurposeConfig};
+    GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
+    )
+    .decode(s)
 }
 
 impl Display for ITermProprietary {

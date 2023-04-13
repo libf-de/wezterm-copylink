@@ -63,21 +63,21 @@ impl std::ops::Deref for RgbaColor {
     }
 }
 
-impl Into<String> for &RgbaColor {
-    fn into(self) -> String {
-        self.color.to_string()
+impl From<&RgbaColor> for String {
+    fn from(val: &RgbaColor) -> Self {
+        val.color.to_string()
     }
 }
 
-impl Into<String> for RgbaColor {
-    fn into(self) -> String {
-        self.color.to_string()
+impl From<RgbaColor> for String {
+    fn from(val: RgbaColor) -> Self {
+        val.color.to_string()
     }
 }
 
-impl Into<SrgbaTuple> for RgbaColor {
-    fn into(self) -> SrgbaTuple {
-        self.color
+impl From<RgbaColor> for SrgbaTuple {
+    fn from(val: RgbaColor) -> Self {
+        val.color
     }
 }
 
@@ -104,22 +104,24 @@ impl From<AnsiColor> for ColorSpec {
     }
 }
 
-impl Into<ColorAttribute> for ColorSpec {
-    fn into(self) -> ColorAttribute {
-        match self {
-            Self::AnsiColor(c) => ColorAttribute::PaletteIndex(c.into()),
-            Self::Color(RgbaColor { color }) => ColorAttribute::TrueColorWithDefaultFallback(color),
-            Self::Default => ColorAttribute::Default,
+impl From<ColorSpec> for ColorAttribute {
+    fn from(val: ColorSpec) -> Self {
+        match val {
+            ColorSpec::AnsiColor(c) => ColorAttribute::PaletteIndex(c.into()),
+            ColorSpec::Color(RgbaColor { color }) => {
+                ColorAttribute::TrueColorWithDefaultFallback(color)
+            }
+            ColorSpec::Default => ColorAttribute::Default,
         }
     }
 }
 
-impl Into<TWColorSpec> for ColorSpec {
-    fn into(self) -> TWColorSpec {
-        match self {
-            Self::AnsiColor(c) => c.into(),
-            Self::Color(RgbaColor { color }) => TWColorSpec::TrueColor(color),
-            Self::Default => TWColorSpec::Default,
+impl From<ColorSpec> for TWColorSpec {
+    fn from(val: ColorSpec) -> Self {
+        match val {
+            ColorSpec::AnsiColor(c) => c.into(),
+            ColorSpec::Color(RgbaColor { color }) => TWColorSpec::TrueColor(color),
+            ColorSpec::Default => TWColorSpec::Default,
         }
     }
 }
@@ -201,7 +203,7 @@ impl Palette {
             indexed: {
                 let mut map = self.indexed.clone();
                 for (k, v) in &other.indexed {
-                    map.insert(k.clone(), v.clone());
+                    map.insert(*k, *v);
                 }
                 map
             },
@@ -438,6 +440,35 @@ impl TabBarColors {
     }
 }
 
+#[derive(Default, Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+#[dynamic(try_from = "String")]
+pub enum IntegratedTitleButtonColor {
+    #[default]
+    Auto,
+    Custom(RgbaColor),
+}
+
+impl Into<String> for IntegratedTitleButtonColor {
+    fn into(self) -> String {
+        match self {
+            Self::Auto => "auto".to_string(),
+            Self::Custom(color) => color.into(),
+        }
+    }
+}
+
+impl TryFrom<String> for IntegratedTitleButtonColor {
+    type Error = <RgbaColor as TryFrom<String>>::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.eq_ignore_ascii_case("auto") {
+            Ok(Self::Auto)
+        } else {
+            Ok(Self::Custom(RgbaColor::try_from(value)?))
+        }
+    }
+}
+
 fn default_background() -> RgbaColor {
     (0x33, 0x33, 0x33).into()
 }
@@ -479,6 +510,18 @@ pub struct TabBarStyle {
     pub new_tab: String,
     #[dynamic(default = "default_new_tab")]
     pub new_tab_hover: String,
+    #[dynamic(default = "default_window_hide")]
+    pub window_hide: String,
+    #[dynamic(default = "default_window_hide")]
+    pub window_hide_hover: String,
+    #[dynamic(default = "default_window_maximize")]
+    pub window_maximize: String,
+    #[dynamic(default = "default_window_maximize")]
+    pub window_maximize_hover: String,
+    #[dynamic(default = "default_window_close")]
+    pub window_close: String,
+    #[dynamic(default = "default_window_close")]
+    pub window_close_hover: String,
 }
 
 impl Default for TabBarStyle {
@@ -486,12 +529,30 @@ impl Default for TabBarStyle {
         Self {
             new_tab: default_new_tab(),
             new_tab_hover: default_new_tab(),
+            window_hide: default_window_hide(),
+            window_hide_hover: default_window_hide(),
+            window_maximize: default_window_maximize(),
+            window_maximize_hover: default_window_maximize(),
+            window_close: default_window_close(),
+            window_close_hover: default_window_close(),
         }
     }
 }
 
 fn default_new_tab() -> String {
     " + ".to_string()
+}
+
+fn default_window_hide() -> String {
+    " . ".to_string()
+}
+
+fn default_window_maximize() -> String {
+    " - ".to_string()
+}
+
+fn default_window_close() -> String {
+    " X ".to_string()
 }
 
 #[derive(Debug, Clone, FromDynamic, ToDynamic)]

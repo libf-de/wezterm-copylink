@@ -149,9 +149,30 @@ impl<'a> Performer<'a> {
                 // resized.
                 {
                     let y = self.cursor.y;
+                    let is_conpty = self.state.enable_conpty_quirks;
+                    let is_alt = self.state.screen.alt_screen_is_active;
                     let screen = self.screen_mut();
                     let y = screen.phys_row(y);
-                    screen.line_mut(y).set_last_cell_was_wrapped(true, seqno);
+
+                    fn makes_sense_to_wrap(s: &str) -> bool {
+                        let len = s.len();
+                        match (len, s.chars().next()) {
+                            (1, Some(c)) => c.is_alphanumeric() || c.is_ascii_punctuation(),
+                            _ => true,
+                        }
+                    }
+
+                    let should_mark_wrapped = !is_alt
+                        && (!is_conpty
+                            || screen
+                                .line_mut(y)
+                                .visible_cells()
+                                .last()
+                                .map(|cell| makes_sense_to_wrap(cell.str()))
+                                .unwrap_or(false));
+                    if should_mark_wrapped {
+                        screen.line_mut(y).set_last_cell_was_wrapped(true, seqno);
+                    }
                 }
                 self.new_line(true);
             }
@@ -297,19 +318,29 @@ impl<'a> Performer<'a> {
                                 self.writer.flush().ok();
                             }
                             _ => {
-                                log::warn!("unhandled DECRQSS {:?}", s);
+                                if self.config.log_unknown_escape_sequences() {
+                                    log::warn!("unhandled DECRQSS {:?}", s);
+                                }
                                 // Reply that the request is invalid
                                 write!(self.writer, "{}0$r{}", DCS, ST).ok();
                                 self.writer.flush().ok();
                             }
                         }
                     }
-                    _ => log::warn!("unhandled {:?}", s),
+                    _ => {
+                        if self.config.log_unknown_escape_sequences() {
+                            log::warn!("unhandled {:?}", s);
+                        }
+                    }
                 }
             }
             _ => match self.device_control_handler.as_mut() {
                 Some(handler) => handler.handle_device_control(ctrl),
-                None => log::warn!("unhandled {:?}", ctrl),
+                None => {
+                    if self.config.log_unknown_escape_sequences() {
+                        log::warn!("unhandled {:?}", ctrl);
+                    }
+                }
             },
         }
     }
@@ -432,7 +463,11 @@ impl<'a> Performer<'a> {
 
             ControlCode::Null => {}
 
-            _ => log::warn!("unhandled ControlCode {:?}", control),
+            _ => {
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("unhandled ControlCode {:?}", control);
+                }
+            }
         }
     }
 
@@ -523,7 +558,9 @@ impl<'a> Performer<'a> {
                 // to receive it. Just ignore it.
             }
             CSI::Unspecified(unspec) => {
-                log::warn!("unknown unspecified CSI: {:?}", format!("{}", unspec))
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("unknown unspecified CSI: {:?}", format!("{}", unspec));
+                }
             }
         };
     }
@@ -641,6 +678,7 @@ impl<'a> Performer<'a> {
                 self.application_keypad = false;
                 self.bracketed_paste = false;
                 self.focus_tracking = false;
+                self.mouse_tracking = false;
                 self.mouse_encoding = MouseEncoding::X10;
                 self.keyboard_encoding = KeyboardEncoding::Xterm;
                 self.sixel_scrolls_right = false;
@@ -670,7 +708,11 @@ impl<'a> Performer<'a> {
                 }
             }
 
-            _ => log::warn!("ESC: unhandled {:?}", esc),
+            _ => {
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("ESC: unhandled {:?}", esc);
+                }
+            }
         }
     }
 
@@ -683,7 +725,7 @@ impl<'a> Performer<'a> {
                 if title.is_empty() {
                     self.icon_title = None;
                 } else {
-                    self.icon_title = Some(title.clone());
+                    self.icon_title = Some(title);
                 }
                 let title = self.icon_title.clone();
                 if let Some(handler) = self.alert_handler.as_mut() {
@@ -695,7 +737,7 @@ impl<'a> Performer<'a> {
                 self.title = title.clone();
                 if let Some(handler) = self.alert_handler.as_mut() {
                     handler.alert(Alert::WindowTitleChanged(title.clone()));
-                    handler.alert(Alert::IconTitleChanged(Some(title.clone())));
+                    handler.alert(Alert::IconTitleChanged(Some(title)));
                 }
             }
 
@@ -703,19 +745,22 @@ impl<'a> Performer<'a> {
             | OperatingSystemCommand::SetWindowTitle(title) => {
                 self.title = title.clone();
                 if let Some(handler) = self.alert_handler.as_mut() {
-                    handler.alert(Alert::WindowTitleChanged(title.clone()));
+                    handler.alert(Alert::WindowTitleChanged(title));
                 }
             }
             OperatingSystemCommand::SetHyperlink(link) => {
                 self.set_hyperlink(link);
             }
             OperatingSystemCommand::Unspecified(unspec) => {
-                let mut output = String::new();
-                write!(&mut output, "Unhandled OSC ").ok();
-                for item in unspec {
-                    write!(&mut output, " {}", String::from_utf8_lossy(&item)).ok();
+                if self.config.log_unknown_escape_sequences() {
+                    let mut output = String::new();
+                    write!(&mut output, "Unhandled OSC ").ok();
+
+                    for item in unspec {
+                        write!(&mut output, " {}", String::from_utf8_lossy(&item)).ok();
+                    }
+                    log::warn!("{}", output);
                 }
-                log::warn!("{}", output);
             }
 
             OperatingSystemCommand::ClearSelection(selection) => {
@@ -790,7 +835,11 @@ impl<'a> Performer<'a> {
                         }
                     }
                 }
-                _ => log::warn!("unhandled iterm2: {:?}", iterm),
+                _ => {
+                    if self.config.log_unknown_escape_sequences() {
+                        log::warn!("unhandled iterm2: {:?}", iterm);
+                    }
+                }
             },
 
             OperatingSystemCommand::FinalTermSemanticPrompt(FinalTermSemanticPrompt::FreshLine) => {

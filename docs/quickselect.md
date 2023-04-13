@@ -1,6 +1,4 @@
-## Quick Select Mode
-
-*Since: 20210502-154244-3f7122cb*
+{{since('20210502-154244-3f7122cb')}}
 
 Quick Select mode allows you to quickly highlight text that matches
 commonly copied patterns, select a match by typing a one-or-two character
@@ -29,4 +27,4 @@ text, and cancel quick select mod.
 
 Pressing `ESCAPE` will cancel quick select mode.
 
-<img width="100%" height="100%" src="screenshots/wezterm-quick-select.png" alt="Screenshot demonstrating the quickselect text highlights">
+![Screenshot demonstrating the quickselect text highlights](screenshots/wezterm-quick-select.png)

@@ -1,10 +1,8 @@
-## SSH Connections
-
 wezterm uses an embedded ssh library to provide an integrated SSH client.  The
 client can be used to make ad-hoc SSH connections to remote hosts
 by invoking the client like this:
 
-```bash
+```console
 $ wezterm ssh wez@my.server
 ```
 
@@ -21,14 +19,14 @@ create.
 SSH sessions created in this way are non-persistent and all associated
 tabs will die if your network connection is interrupted.
 
-Take a look at [the multiplexing section](multiplexing.html) for an
+Take a look at [the multiplexing section](multiplexing.md) for an
 alternative configuration that connects to a remote wezterm instance
 and preserves your tabs.
 
 The [ssh_backend](config/lua/config/ssh_backend.md) configuration can
 be used to specify which ssh library is used.
 
-*Since: 20210404-112810-b63a949d*
+{{since('20210404-112810-b63a949d')}}
 
 wezterm is now able to parse `~/.ssh/config` and `/etc/ssh/ssh_config`
 and respects the following options:
@@ -46,13 +44,13 @@ and respects the following options:
 All other options are parsed but have no effect.  Notably, neither `Match` or
 `Include` will do anything.
 
-*Since: 20210502-154244-3f7122cb:*
+{{since('20210502-154244-3f7122cb:')}}
 
 `Match` is now recognized but currently supports only single-phase (`final`,
 `canonical` are not supported) configuration parsing for `Host` and
 `LocalUser`.  `Exec` based matches are recognized but not supported.
 
-*Since: 20210814-124438-54e29167:*
+{{since('20210814-124438-54e29167:')}}
 
 `Include` is now supported.
 

@@ -12,7 +12,7 @@
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::range_plus_one))]
 
 use anyhow::{bail, Context as _, Error};
-use config::keyassignment::PaneDirection;
+use config::keyassignment::{PaneDirection, ScrollbackEraseMode};
 use mux::client::{ClientId, ClientInfo};
 use mux::pane::PaneId;
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
@@ -23,6 +23,7 @@ use rangeset::*;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
 use smol::prelude::*;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::Cursor;
 use std::ops::Range;
@@ -338,6 +339,7 @@ macro_rules! pdu {
                         Pdu::$name(s) => {
                             let (data, is_compressed) = serialize(s)?;
                             let encoded_size = encode_raw($vers, serial, &data, is_compressed, w)?;
+                            log::debug!("encode {} size={encoded_size}", stringify!($name));
                             metrics::histogram!("pdu.size", encoded_size as f64, "pdu" => stringify!($name));
                             metrics::histogram!("pdu.size.rate", encoded_size as f64, "pdu" => stringify!($name));
                             Ok(())
@@ -353,9 +355,21 @@ macro_rules! pdu {
                         Pdu::$name(s) => {
                             let (data, is_compressed) = serialize(s)?;
                             let encoded_size = encode_raw_async($vers, serial, &data, is_compressed, w).await?;
+                            log::debug!("encode_async {} size={encoded_size}", stringify!($name));
                             metrics::histogram!("pdu.size", encoded_size as f64, "pdu" => stringify!($name));
                             metrics::histogram!("pdu.size.rate", encoded_size as f64, "pdu" => stringify!($name));
                             Ok(())
+                        }
+                    ,)*
+                }
+            }
+
+            pub fn pdu_name(&self) -> &'static str {
+                match self {
+                    Pdu::Invalid{..} => "Invalid",
+                    $(
+                        Pdu::$name(_) => {
+                            stringify!($name)
                         }
                     ,)*
                 }
@@ -417,7 +431,7 @@ macro_rules! pdu {
 /// The overall version of the codec.
 /// This must be bumped when backwards incompatible changes
 /// are made to the types and protocol.
-pub const CODEC_VERSION: usize = 32;
+pub const CODEC_VERSION: usize = 41;
 
 // Defines the Pdu enum.
 // Each struct has an explicit identifying number.
@@ -468,9 +482,35 @@ pdu! {
     ActivatePaneDirection: 50,
     GetPaneRenderableDimensions: 51,
     GetPaneRenderableDimensionsResponse: 52,
+    PaneFocused: 53,
+    TabResized: 54,
+    TabAddedToWindow: 55,
+    TabTitleChanged: 56,
+    WindowTitleChanged: 57,
+    RenameWorkspace: 58,
+    EraseScrollbackRequest: 59,
+    GetPaneDirection: 60,
+    GetPaneDirectionResponse: 61,
 }
 
 impl Pdu {
+    /// Returns true if this type of Pdu represents action taken
+    /// directly by a user, rather than background traffic on
+    /// a live connection
+    pub fn is_user_input(&self) -> bool {
+        match self {
+            Self::WriteToPane(_)
+            | Self::SendKeyDown(_)
+            | Self::SendMouseEvent(_)
+            | Self::SendPaste(_)
+            | Self::Resize(_)
+            | Self::SetClipboard(_)
+            | Self::SetPaneZoomed(_)
+            | Self::SpawnV2(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn stream_decode(buffer: &mut Vec<u8>) -> anyhow::Result<Option<DecodedPdu>> {
         let mut cursor = Cursor::new(buffer.as_slice());
         match Self::decode(&mut cursor) {
@@ -543,6 +583,7 @@ impl Pdu {
             | Pdu::SetPalette(SetPalette { pane_id, .. })
             | Pdu::NotifyAlert(NotifyAlert { pane_id, .. })
             | Pdu::SetClipboard(SetClipboard { pane_id, .. })
+            | Pdu::PaneFocused(PaneFocused { pane_id })
             | Pdu::PaneRemoved(PaneRemoved { pane_id }) => Some(*pane_id),
             _ => None,
         }
@@ -593,6 +634,8 @@ pub struct ListPanes {}
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
 pub struct ListPanesResponse {
     pub tabs: Vec<PaneNode>,
+    pub tab_titles: Vec<String>,
+    pub window_titles: HashMap<WindowId, String>,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
@@ -689,9 +732,9 @@ impl InputSerial {
     }
 }
 
-impl Into<InputSerial> for std::time::SystemTime {
-    fn into(self) -> InputSerial {
-        let duration = self
+impl From<std::time::SystemTime> for InputSerial {
+    fn from(val: std::time::SystemTime) -> Self {
+        let duration = val
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .expect("SystemTime before unix epoch?");
         let millis: u64 = duration
@@ -722,6 +765,15 @@ pub struct SetWindowWorkspace {
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct RenameWorkspace {
+    pub old_workspace: String,
+    pub new_workspace: String,
+}
+
+/// This is used both as a notification from server->client
+/// and as a configuration request from client->server when
+/// the client's preferred configuration changes
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
 pub struct SetPalette {
     pub pane_id: PaneId,
     pub palette: ColorPalette,
@@ -731,6 +783,34 @@ pub struct SetPalette {
 pub struct NotifyAlert {
     pub pane_id: PaneId,
     pub alert: Alert,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct TabAddedToWindow {
+    pub tab_id: TabId,
+    pub window_id: WindowId,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct TabResized {
+    pub tab_id: TabId,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct TabTitleChanged {
+    pub tab_id: TabId,
+    pub title: String,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct WindowTitleChanged {
+    pub window_id: WindowId,
+    pub title: String,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct PaneFocused {
+    pub pane_id: PaneId,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
@@ -769,6 +849,17 @@ pub struct SetPaneZoomed {
     pub containing_tab_id: TabId,
     pub pane_id: PaneId,
     pub zoomed: bool,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct GetPaneDirection {
+    pub pane_id: PaneId,
+    pub direction: PaneDirection,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct GetPaneDirectionResponse {
+    pub pane_id: Option<PaneId>,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
@@ -997,6 +1088,12 @@ impl From<Vec<(StableRowIndex, Line)>> for SerializedLines {
 pub struct GetLinesResponse {
     pub pane_id: PaneId,
     pub lines: SerializedLines,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug)]
+pub struct EraseScrollbackRequest {
+    pub pane_id: PaneId,
+    pub erase_mode: ScrollbackEraseMode,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]

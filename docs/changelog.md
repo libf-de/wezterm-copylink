@@ -1,3 +1,13 @@
+---
+hide:
+    - navigation
+toc_depth: 3
+---
+
+<p style="display:none">
+changelog
+</p>
+
 ## Changes
 
 Releases are named using the date, time and git commit hash.
@@ -10,6 +20,209 @@ and the feature set may change, but since @wez uses this as a daily driver, its
 usually the best available version.
 
 As features stabilize some brief notes about them will accumulate here.
+
+#### Fixed
+
+* Modals, such as `CharSelect` and `CommandPalette` did not respect alternative
+  OS-level key maps. #3470
+* key encoding: incorrect F1-F4 representation when using kitty encoding. #3473
+* mux: Attempting to spawn into an ad-hoc SSH domain after the last tab could
+  fail with a cryptic error message. The connection is now re-established. ?3480
+* Laggy behavior when processing a continual stream of output, for example,
+  serial data received at a rate of 1 byte just slightly faster than
+  `mux_output_parser_coalesce_delay_ms` (`3ms` by default). Thanks to @pcc!
+  #3497 #3466 #837.
+
+### 20230408-112425-69ae8472
+
+#### Changed
+* macOS: Japanese IME users: CTRL-modified keys are no long routed to the IME
+  by default, as it introduced problems with CTRL-key combinations for other users.
+  A new [macos_forward_to_ime_modifier_mask](config/lua/config/macos_forward_to_ime_modifier_mask.md)
+  option has been introduced to allow you to control which modifier keys get routed
+  to the IME, so that you can opt back in to that behavior. #2630 #2771 #2435
+* Multiplexer client can now send the locally configured color palette to the
+  mux server, which makes it more straightforward to configure color schemes
+  when using multiplexing.
+* Multiplexer: closing a window that has any mux client panes will now detach
+  the associated domain(s) on close. Previous behavior was to treat just the
+  panes in the window as detached without actually detaching the whole domain,
+  which would cause the window to recycle and activate a different workspace.
+  With a definitive detach, the window will close and wezterm will terminate if
+  the only panes were associated with that domain, which is what most users
+  expect. #2644
+* [quick_select_patterns](config/lua/config/quick_select_patterns.md) and
+  [hyperlink_rules](config/lua/config/hyperlink_rules.md) now support
+  backreferences and look around assertions. #3247
+* [wezterm replay](cli/replay.md) new options `--explain-only`, `--cat`. #3446
+
+#### New
+* [PromptInputLine](config/lua/keyassignment/PromptInputLine.md) action for
+  prompting the user for a line of text and then doing something with it.
+  Can be used to prompt for (re)naming new or existing tabs, workspaces and so on.
+* [InputSelector](config/lua/keyassignment/InputSelector.md) action for
+  prompting the user to select an item from a list and then doing something
+  with it.
+* [pane:activate()](config/lua/pane/activate.md) and [tab:activate()](config/lua/MuxTab/activate.md). #3217
+* [ulimit_nofile](config/lua/config/ulimit_nofile.md) and [ulimint_nproc](config/lua/config/ulimit_nproc.md) options. ?3353
+* [serial_ports](config/lua/config/serial_ports.md) for more convenient access to serial ports
+* `ssh_domains` now auto-populate from your `~/.ssh/config` file. You can use
+  [wezterm.default_ssh_domains()](config/lua/wezterm/default_ssh_domains.md) to
+  obtain that same information and amend/extend it.
+* [display_pixel_geometry](config/lua/config/display_pixel_geometry.md) to specify subpixel antialiasing geometry. ?3422
+* Integrated title and tab bar.
+  See also [window_decorations](config/lua/config/window_decorations.md),
+  [integrated_title_button_style](config/lua/config/integrated_title_button_style.md),
+  [integrated_title_buttons](config/lua/config/integrated_title_buttons.md),
+  [integrated_title_button_alignment](config/lua/config/integrated_title_button_alignment.md)
+  [integrated_title_button_color](config/lua/config/integrated_title_button_color.md) and,
+  if you are using the retro tab bar, [tab_bar_style](config/lua/config/tab_bar_style.md).
+  Thanks to @yuraiz for getting things moving! #2722 #1180
+* Lua: [gui_window:active_tab()](config/lua/window/active_tab.md),
+  [gui_window:active_pane()](config/lua/window/active_pane.md) (surprise! this was already there, just undocumented!),
+  [mux_window:active_tab()](config/lua/mux-window/active_tab.md),
+  [mux_window:active_pane()](config/lua/mux-window/active_pane.md),
+  [tab:active_pane()](config/lua/MuxTab/active_pane.md) methods for conveniently getting at the active tab/pane
+  from a window/tab.
+* [wezterm cli set-tab-title](cli/cli/set-tab-title.md) and
+  [wezterm cli set-window-title](cli/cli/set-window-title.md). #522 #1598
+* [wezterm cli rename-workspace](cli/cli/rename-workspace.md). #2787
+* [wezterm.mux.rename_workspace](config/lua/wezterm.mux/rename_workspace.md). #2787
+* [wezterm cli get-pane-direction](cli/cli/get-pane-direction.md)
+* [pane:get_tty_name()](config/lua/pane/get_tty_name.md) and
+  [PaneInformation.tty_name](config/lua/PaneInformation.md) to reason about the
+  tty name on local unix systems.
+* [wezterm.has_action()](config/lua/wezterm/has_action.md) makes it easier to
+  author a wezterm config that works across different wezterm versions. #3454
+* Color schemes: [Ef-Autumn](colorschemes/e/index.md#ef-autumn),
+  [Ef-Bio](colorschemes/e/index.md#ef-bio),
+  [Ef-Cherie](colorschemes/e/index.md#ef-cherie),
+  [Ef-Dark](colorschemes/e/index.md#ef-dark),
+  [Ef-Spring](colorschemes/e/index.md#ef-spring),
+  [Ef-Summer](colorschemes/e/index.md#ef-summer),
+  [Ef-Trio-Dark](colorschemes/e/index.md#ef-trio-dark),
+  [Ef-Trio-Light](colorschemes/e/index.md#ef-trio-light),
+  [Ef-Tritanopia-Dark](colorschemes/e/index.md#ef-tritanopia-dark),
+  [Ef-Winter](colorschemes/e/index.md#ef-winter),
+  [Gruvbox Material (Gogh)](colorschemes/g/index.md#gruvbox-material-gogh),
+  [Modus-Operandi](colorschemes/m/index.md#modus-operandi),
+  [Modus-Vivendi](colorschemes/m/index.md#modus-vivendi)
+
+#### Fixed
+* mux: Stale remote window mapping could prevent spawning new tabs in remote domain. #2759
+* mux: Splitting then killing a pane could result in incorrect pane sizes. #3386
+* Windows: "error converting Lua string to &str" on systems with an ACP that
+  was not compatible with UTF-8 when wezterm was placed in a directory with
+  a non UTF-8, non-ASCII name. #3390
+* mux: `--config` related command line options passed to `wezterm-mux-server` were
+  not propagated when using `--daemonize`. #3397 #2686
+* mux: server would lock and then unlock the pid/lock file when it re-executed,
+  rendering it useless.
+* `tab:panes_with_info()` reported incorrect `is_zoomed` value. #3404
+* [window:perform_action()](config/lua/window/perform_action.md) now awaits the
+  dispatch of the key assignment action, making it less racy to script multiple
+  actions in a row. Note that clipboard operations are still asynchronous with
+  respect to the dispatch of the assignment. #3405
+* [window:perform_action()](config/lua/window/perform_action.md) now correctly
+  resolves overlay panes such as Copy Mode. #3209
+* macOS: CTRL-Q had to be pressed twice to register when `use_ime=true`. #2630
+* mux: [tab:set_title()](config/lua/MuxTab/set_title.md) didn't get passed to
+  the remote server, so any tab title changes were lost when reconnecting. #1598
+* `wezterm connect --workspace WS DOM` didn't use the provided workspace when
+  starting up the mux server. #2734
+* mux: `ClearScrollback` was not forwarded to remote server. #2624
+* ssh: `%r` `%h` and `%p` tokens were implicitly supported by libssh but stopped
+  working in `ProxyCommand` when we took over running the proxy command. #3437
+* mux: Improved latency for large window sizes. #1872
+* mux: [pane:has_unseen_output()](config/lua/pane/has_unseen_output.md) and
+  [PaneInformation.has_unseen_output](config/lua/PaneInformation.md) now work
+  with multiplexer panes. #2625
+* mux: attempting to split a remote pane into a different target domain could
+  produce a warning about the remote home directory not being readable to
+  the local machine or vice versa. #3442
+* `wezterm.config_builder` now works with `table.insert(config.keys, {..})`
+* mux: `wezterm cli activate-pane-direction` inconsistent behavior with remote mux. #3387 #3448
+* [quick_select_patterns](config/lua/config/quick_select_patterns.md) didn't
+  take precedence over built-in rules. #3456
+* Painted pane background color behind the tab bar when there was only one
+  pane. Matters when the tab bar is transparent! #3450
+* Wayland: window not repainting consistently when using the keyboard when
+  using `front_end="WebGpu"`.  Thanks to @jokeyrhyme for working through
+  different iterations of this fix! #3126
+* Windows: reloading the config could partially knock the window out of
+  full screen mode. #3439
+
+### 20230326-111934-3666303c
+
+#### New
+* [mouse_wheel_scrolls_tabs](config/lua/config/mouse_wheel_scrolls_tabs.md) option
+  to control whether the mouse wheel can be used to activate tabs when hovering
+  over the tab bar. Thanks to @eaglgenes101! #3227
+* [wezterm cli kill-pane](cli/cli/kill-pane.md),
+  [wezterm cli activate-pane](cli/cli/activate-pane.md) and
+  [wezterm cli activate-tab](cli/cli/activate-tab.md) #3352 #886
+* macOS:
+  [macos_window_background_blur](config/lua/config/macos_window_background_blur.md)
+  enables a nice translucent window effect. Thanks to @Gkirito! #3344
+* [new-tab-button-click event](config/lua/window-events/new-tab-button-click.md)
+  allows overriding the effect of clicking the New Tab button. #323
+* [pane:move_to_new_window()](config/lua/pane/move_to_new_window.md),
+  [pane:move_to_new_tab()](config/lua/pane/move_to_new_tab.md). #3374
+
+#### Fixed
+* ssh ProxyCommand didn't parse command lines containing `=` correctly. #3307
+* `wezterm.GLOBALS.foo` now supports `__len` and `__pairs` metamethods, as well
+  as being passed to `wezterm.json_encode`
+* `wezterm --skip-config` resulted in an `unexpected argument` error, while
+  `wezterm -n` still worked as intended. #3325
+* Using `RESIZE|MACOS_FORCE_DISABLE_SHADOW` or
+  `RESIZE|MACOS_FORCE_ENABLE_SHADOW` would cause a spooky titlebar to appear.
+  Thanks to @noefroidevaux! #3330
+* ConPTY: logical line wrapping falsely joining long runs of output from classic
+  windows console subsystem programs. The behavior now is to only mark long lines
+  as wrapped if the last character on the prior line is alphanumeric or ascii
+  punctuation. Other characters will cause the logical line to break.
+  #3278 #3177
+* `wezterm cli activate-pane-direction` didn't cause the gui to repaint, making
+  it difficult to notice that the active pane had changed. Thanks to @ir-ae!
+  #3303 #2879 #3323
+* `window_frame.border_XXX` not correctly accounted for when initially sizing
+  the window, or when applying font scaling to a window. #3333
+* `RIS` escape sequence (and `ResetTerminal` action) didn't disable mouse
+  event reporting.
+* Unblock all signals when spawning programs, to avoid strangess when the
+  parent of the wezterm process spawns wezterm with an unusual signal mask.
+* Lingering openconsole.exe processes on Windows. Thanks to @mbikovitsky! #3339
+* macos: command line parameters beyond the first were treated as terminal
+  command scripts and opened spurious windows. #3340
+* imgcat broken with multiplexer protocol #3343
+* `wezterm cli activate-pane-direction` would not cause the focus to change
+  in the GUI when explicitly using multiplexing domains. #2863
+* macOS: update entitlements so that macOS will prompt the user when they
+  spawn an app that wants to use the microphone and other resources. #3359
+* Command palette didn't show command label or arguments for entries constructed
+  from your key assignments, making it difficult to distinguish them from each other. #3252
+* macOS: key assignments that were routed via the macOS menubar didn't guarantee
+  to invalidate the associated window, making it look like they had no effect
+  or hung. #3365
+* `CTRL-SHIFT-R` assignment in `CharSelect` mode didn't cycle back through
+  the emoji categories as intended, but performed the global `ReloadConfiguration`
+  action instead. #2947
+* mux: resizing the window larger, then spawning a tab, would result in the new
+  tab having pixel dimensions of 0 and prevent imgcat from functioning until the
+  tab was explicitly resized. #3366
+* mux: initial attach and spawn would leave the dpi at the assumed dpi resulting
+  in incorrect image scaling for imgcat. #3366
+* mux: `wezterm cli move-pane-to-new-tab` didn't resync new window structure
+  and would appear to have had no effect until you detached and re-attached. #3219
+* mux: `wezterm cli move-pane-to-new-tab` didn't forward the structural change
+  to a remote mux, so if you ran it against the mux in your GUI, the state on
+  the actual mux server was not updated. #3374
+
+#### Updated
+* Bundled JetBrainsMono to 2.304. #3362
+
+### 20230320-124340-559cb7b0
 
 #### New
 * Copy Mode now supports using `CTRL-u` and `CTRL-d` to move by half a page at
@@ -34,20 +247,24 @@ As features stabilize some brief notes about them will accumulate here.
   [pane:get_semantic_zones()](config/lua/pane/get_semantic_zones.md),
   [pane:get_semantic_zone_at()](config/lua/pane/get_semantic_zone_at.md)
 * Color schemes: [Apple Classic](colorschemes/a/index.md#apple-classic),
-  [\_bash (Gogh)](colorschemes/b/index.md#bash-gogh),
   [Breath (Gogh)](colorschemes/b/index.md#breath-gogh),
-  [BreathLight (Gogh)](colorschemes/b/index.md#breathlight-gogh),
-  [BreathSilverfox (Gogh)](colorschemes/b/index.md#breathsilverfox-gogh),
+  [Breath Darker (Gogh)](colorschemes/b/index.md#breath-darker-gogh),
+  [Breath Light (Gogh)](colorschemes/b/index.md#breath-light-gogh),
+  [Breath Silverfox (Gogh)](colorschemes/b/index.md#breath-silverfox-gogh),
   [Breeze (Gogh)](colorschemes/b/index.md#breeze-gogh),
+  [catppuccin-latte](colorschemes/c/index.md#catppuccin-latte),
   [Everblush](colorschemes/e/index.md#everblush),
-  [EverforestDark (Gogh)](colorschemes/e/index.md#everforestdark-gogh),
-  [EverforestLight (Gogh)](colorschemes/e/index.md#everforestlight-gogh),
+  [Everforest Dark (Gogh)](colorschemes/e/index.md#everforest-dark-gogh),
+  [Everforest Light (Gogh)](colorschemes/e/index.md#everforest-light-gogh),
   [GruvboxDark](colorschemes/g/index.md#gruvboxdark),
   [GruvboxDarkHard](colorschemes/g/index.md#gruvboxdarkhard),
-  [kanagawa (Gogh)](colorschemes/k/index.md#kanagawa-gogh),
+  [Kanagawa (Gogh)](colorschemes/k/index.md#kanagawa-gogh),
+  [Predawn (Gogh)](colorschemes/p/index.md#predawn-gogh),
   [rose-pine](colorschemes/r/index.md#rose-pine),
   [rose-pine-dawn](colorschemes/r/index.md#rose-pine-dawn),
-  [rose-pine-moon](colorschemes/r/index.md#rose-pine-moon)
+  [rose-pine-moon](colorschemes/r/index.md#rose-pine-moon),
+  [Solarized (dark) (terminal.sexy)](colorschemes/s/index.md#solarized-dark-terminal-sexy),
+  [tokyonight_moon](colorschemes/t/index.md#tokyonight-moon)
 * [window:focus()](config/lua/window/focus.md),
   [ActivateWindow](config/lua/keyassignment/ActivateWindow.md),
   [ActivateWindowRelative](config/lua/keyassignment/ActivateWindowRelative.md),
@@ -71,6 +288,12 @@ As features stabilize some brief notes about them will accumulate here.
 * `CTRL-SHIFT-P` now activates the new [command
   palette](config/lua/keyassignment/ActivateCommandPalette.md)
   [#1485](https://github.com/wez/wezterm/issues/1485)
+* `wezterm ssh` now supports `%l` and `%L` tokens in config files.
+  [#3176](https://github.com/wez/wezterm/issues/3176)
+* [hyperlink_rules](config/lua/config/hyperlink_rules.md) now support
+  specifying which capture group should be highlighted.
+* [wezterm.default_hyperlink_rules](config/lua/wezterm/default_hyperlink_rules.md)
+  function makes it easier to extend the default set of hyperlink rules.
 
 #### Fixed
 * X11: hanging or killing the IME could hang wezterm
@@ -119,6 +342,28 @@ As features stabilize some brief notes about them will accumulate here.
 * SSH: Closing an individual pane via `CloseCurrentPane` would kill the remote
   pane but not detect that it had exited.
   [#3095](https://github.com/wez/wezterm/issues/3095)
+* Panic when decoding animated webp images
+  [#3250](https://github.com/wez/wezterm/issues/3250)
+* Config was not applied to non-zoomed panes when config was reloaded
+  [#3259](https://github.com/wez/wezterm/issues/3259)
+* Default [hyperlink_rules](config/lua/config/hyperlink_rules.md) now match
+  URLs with port numbers
+  [#928](https://github.com/wez/wezterm/issues/928)
+* Incorrect cursor position after processing iTerm2 image escape sequence
+  [#3266](https://github.com/wez/wezterm/issues/3266)
+* Images are now buffered to temporary files and decoded in background
+  threads. This reduces the RAM overhead especially of long animations and
+  reduces the render latency due to decoding frames; animations now render as
+  soon as the first frame is decoded.
+  [#3263](https://github.com/wez/wezterm/issues/3263)
+* Improved compatiblity with the Kitty Image Protocol
+  [#2716](https://github.com/wez/wezterm/issues/2716)
+* [wezterm.time.call_after](config/lua/wezterm.time/call_after.md) would not
+  work when used in an event callback.
+  [#3026](https://github.com/wez/wezterm/issues/3026)
+* Hover state not correctly indicated for retro tab bar when showing at
+  the bottom of the window
+  [#3113](https://github.com/wez/wezterm/issues/3113)
 
 #### Changed
 * `CTRL-SHIFT-P` now activates the new [command
@@ -167,6 +412,12 @@ As features stabilize some brief notes about them will accumulate here.
 * WSL Domains returned from
   [wezterm.default_wsl_domains](config/lua/wezterm/default_wsl_domains.md) now
   set `default_cwd="~"` [#2826](https://github.com/wez/wezterm/issues/2826)
+* wezterm now also searches `$XDG_CONFIG_DIRS` as well as `$XDG_CONFIG_HOME`
+  when searching for config files. Thanks to [@jmbaur](https://github.com/jmbaur)!
+  [#3146](https://github.com/wez/wezterm/pull/3146)
+* [wezterm.time.call_after](config/lua/wezterm.time/call_after.md) now accepts
+  fractional numbers of seconds.
+  [#3287](https://github.com/wez/wezterm/issues/3287)
 
 #### Updated
 * Bundled harfbuzz updated to version 6.0.0
@@ -676,7 +927,7 @@ As features stabilize some brief notes about them will accumulate here.
 
 * Fancy Tab Bars are now the default. The default tab bar colors have changed to accommodate the new more native look.  You can turn them off by setting [use_fancy_tab_bar = false](config/lua/config/use_fancy_tab_bar.md).
 * Support for the [Kitty Image Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is now enabled by default.  Most of the protocol is supported; animation support is not yet implemented. Try the amazing [notcurses](https://notcurses.com/) if you want to see what modern terminal graphics can do! [#986](https://github.com/wez/wezterm/issues/986)
-* unix domains now support an optional `proxy_command` to use in place of a direct unix socket connection. [Read more about multiplexing unix domains](multiplexing.html#unix-domains)
+* unix domains now support an optional `proxy_command` to use in place of a direct unix socket connection. [Read more about multiplexing unix domains](multiplexing.md#unix-domains)
 * [ScrollToTop](config/lua/keyassignment/ScrollToTop.md) and [ScrollToBottom](config/lua/keyassignment/ScrollToBottom.md) key assignments [#1360](https://github.com/wez/wezterm/issues/1360)
 * [SSH Domains](config/lua/SshDomain.md) now support specifying `ssh_config` overrides. [#1149](https://github.com/wez/wezterm/issues/1149)
 * [default_gui_startup_args](config/lua/config/default_gui_startup_args.md) allows defaulting to starting the ssh client (for example). [#1030](https://github.com/wez/wezterm/issues/1030)
@@ -837,7 +1088,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Fixed: incorrect Sixel HLS hue handling [#775](https://github.com/wez/wezterm/issues/775)
 * Fixed: we now recognize the `CSI 48:2:0:214:255m` form of specifying true color text attributes [#785](https://github.com/wez/wezterm/issues/785)
 * Fixed: split separators didn't respect `tab_bar_at_bottom=true` and were rendered in the wrong place [#797](https://github.com/wez/wezterm/issues/797)
-* Improved: messaging around [exit_behavior](https://wezfurlong.org/wezterm/config/lua/config/exit_behavior.html)
+* Improved: messaging around [exit_behavior](https://wezfurlong.org/wezterm/config/lua/config/exit_behavior.md)
 * Fixed: errors loading custom color schemes are now logged to the error log [#794](https://github.com/wez/wezterm/issues/794)
 * Fixed: OSC 7 (current working directory) now works with paths that contain spaces and other special characters. Thanks to [@Arvedui](https://github.com/Arvedui)! [#799](https://github.com/wez/wezterm/pull/799)
 * Changed: the homebrew tap is now a Cask that installs to the /Applications directory on macOS. Thanks to [@laggardkernel](https://github.com/laggardkernel)!
@@ -990,7 +1241,7 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20210314-114017-04b7cedd
 
 * New: [tab_bar_style](config/lua/config/tab_bar_style.md) allows customizing the appearance of the rest of tha tab bar.
-* New: animated gif and png images displayed via `wezterm imgcat` (the iTerm2 image protocol), or attached to the window background via [window_background_image](config/appearance.html#window-background-image) will now animate while the window has focus.
+* New: animated gif and png images displayed via `wezterm imgcat` (the iTerm2 image protocol), or attached to the window background via [window_background_image](config/appearance.md#window-background-image) will now animate while the window has focus.
 * New: added [foreground_text_hsb](config/lua/config/foreground_text_hsb.md) setting to adjust hue, saturation and brightness when text is rendered.
 * New: added [ResetFontAndWindowSize](config/lua/keyassignment/ResetFontAndWindowSize.md) key assignment.
 * New: added [ScrollByLine](config/lua/keyassignment/ScrollByLine.md) key assignment.
@@ -1061,7 +1312,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Fixed an issue where a symbol-only font would be seen as 0-width and panic wezterm [#404](https://github.com/wez/wezterm/issues/404)
 * Tweaked mouse selection: we now round the x-coordinate to the nearest cell which makes it a bit more forgiving if the mouse cursor is slightly to the left of the intended cell start. [#350](https://github.com/wez/wezterm/issues/350)
 * Added `selection_word_boundary` option to control double-click word selection boundaries. The default is <tt> \t\n{}\[\]()\"'\`</tt>. [#405](https://github.com/wez/wezterm/issues/405)
-* Added support for Curly, Dotted and Dashed underlines.  See [this documentation](faq.html#how-do-i-enable-undercurl-curly-underlines) on the escape sequences how enable undercurl support in vim and nvim. [#415](https://github.com/wez/wezterm/issues/415)
+* Added support for Curly, Dotted and Dashed underlines.  See [this documentation](faq.md#how-do-i-enable-undercurl-curly-underlines) on the escape sequences how enable undercurl support in vim and nvim. [#415](https://github.com/wez/wezterm/issues/415)
 * Fixed an issue where wezterm would spawn processes with `umask 077` on unix systems, rather than the more commonly expected `umask 022`. [#416](https://github.com/wez/wezterm/issues/416)
 * macOS: We now ship a Universal binary containing both Intel and "Apple Silicon" architectures
 * Setting a really large or really small font scale (using CTRL +/-) no longer causes a panic [#428](https://github.com/wez/wezterm/issues/428)
@@ -1071,8 +1322,8 @@ As features stabilize some brief notes about them will accumulate here.
 * New: `adjust_window_size_when_changing_font_size` option to control whether changing the font size adjusts the dimensions of the window (true) or adjusts the number of terminal rows/columns (false).  The default is `true`. [#431](https://github.com/wez/wezterm/issues/431)
 * macOS: we no longer use MetalANGLE to render the gui; it was short lived as macOS Big Sur now uses Metal in its CGL implementation.  Support for using MetalANGLE is still present if the dylib is found on startup, but we no longer ship the dylib.
 * Windows: when pasting text, ensure that the text has CRLF line endings unless bracketed paste is enabled. This imperfect heuristic helps to keep multi-line pastes on multiple lines when using Windows console applications and to avoid interleaved blank lines when using unix applications. [#411](https://github.com/wez/wezterm/issues/411)
-* New: [ClearScrollback](config/lua/keyassignment/ClearScrollback.html) now accepts a parameter to control whether the viewport is cleared along with the scrollback. Thanks to [@dfrankland](https://github.com/dfrankland)!
-* New: [default_cwd](config/lua/config/default_cwd.html) to specify an alternative current working directory. Thanks to [@dfrankland](https://github.com/dfrankland)!
+* New: [ClearScrollback](config/lua/keyassignment/ClearScrollback.md) now accepts a parameter to control whether the viewport is cleared along with the scrollback. Thanks to [@dfrankland](https://github.com/dfrankland)!
+* New: [default_cwd](config/lua/config/default_cwd.md) to specify an alternative current working directory. Thanks to [@dfrankland](https://github.com/dfrankland)!
 * New: [CopyTo](config/lua/keyassignment/CopyTo.md) and [PasteFrom](config/lua/keyassignment/PasteFrom.md) actions. [Copy](config/lua/keyassignment/Copy.md), [Paste](config/lua/keyassignment/Paste.md) and [PastePrimarySelection](config/lua/keyassignment/PastePrimarySelection.md) are now deprecated in favor of these new options.
 * X11: Mouse-based selection now copies-to and pastes-from the `PrimarySelection` by default. The [CompleteSelection](config/lua/keyassignment/CompleteSelection.md) and [CompleteSelectionOrOpenLinkAtMouseCursor](config/lua/keyassignment/CompleteSelectionOrOpenLinkAtMouseCursor.md) actions now require a parameter to specify the clipboard.
 * X11: `SHIFT-CTRL-C` and `SHIFT-CTRL-V` now copy-to and paste from the `Clipboard` by default.  `SHIFT-Insert` pastes from the `PrimarySelection` by default.
@@ -1281,7 +1532,7 @@ As features stabilize some brief notes about them will accumulate here.
   enables "Open WezTerm Here" in the explorer.exe context menu.
 * Added `ClearScrollback` key assignment to clear the scrollback.  This is bound to CMD-K and CTRL-SHIFT-K by default.
 * Added `Search` key assignment to search the scrollback.  Read the new
-  [scrollback](scrollback.html) section for more information!
+  [scrollback](scrollback.md) section for more information!
 * Fixed an issue where ALT+number would send the wrong output for European
   keyboard layouts on macOS and Linux.  As part of this the default behavior
   has changed: we used to force ALT+number to produce ALT+number instead of
@@ -1293,9 +1544,9 @@ As features stabilize some brief notes about them will accumulate here.
   you have installed so that you can quickly spawn a shell in any of them.
   You can suppress this behavior if you wish by setting
   `add_wsl_distributions_to_launch_menu = false`.
-  [Read more about the launcher menu](config/launch.html#the-launcher-menu)
+  [Read more about the launcher menu](config/launch.md#the-launcher-menu)
 * Added `ActivateCopyMode` key assignment to put the tab into mouseless-copy
-  mode; [use the keyboard to define the selected text region](copymode.html).
+  mode; [use the keyboard to define the selected text region](copymode.md).
   This is bound to CTRL-SHIFT-X by default.
 
 ### 20200517-122836-92c201c6
@@ -1321,7 +1572,7 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20200503-171512-b13ef15f
 
 * Added the `launch_menu` configuration for the launcher menu
-  as described in [Launching Programs](config/launch.html).
+  as described in [Launching Programs](config/launch.md).
 * Fixed a crash when reloading a config with `enable_tab_bar=false`
 * Fixed missing icon when running under X11 and Wayland
 * Wayland client-side-decorations improved and now also render window title

@@ -71,7 +71,7 @@ impl LocalProcessInfo {
             Some(LinuxStat {
                 pid,
                 name: name.to_string(),
-                status: fields.get(0)?.to_string(),
+                status: fields.first()?.to_string(),
                 ppid: fields.get(1)?.parse().ok()?,
                 starttime: fields.get(20)?.parse().ok()?,
             })
@@ -82,7 +82,7 @@ impl LocalProcessInfo {
         }
 
         fn cwd_for_pid(pid: pid_t) -> PathBuf {
-            LocalProcessInfo::current_working_dir(pid as u32).unwrap_or_else(|| PathBuf::new())
+            LocalProcessInfo::current_working_dir(pid as u32).unwrap_or_else(PathBuf::new)
         }
 
         fn parse_cmdline(pid: pid_t) -> Vec<String> {

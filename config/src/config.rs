@@ -6,8 +6,8 @@ use crate::color::{
 use crate::daemon::DaemonOptions;
 use crate::exec_domain::ExecDomain;
 use crate::font::{
-    AllowSquareGlyphOverflow, FontLocatorSelection, FontRasterizerSelection, FontShaperSelection,
-    FreeTypeLoadFlags, FreeTypeLoadTarget, StyleRule, TextStyle,
+    AllowSquareGlyphOverflow, DisplayPixelGeometry, FontLocatorSelection, FontRasterizerSelection,
+    FontShaperSelection, FreeTypeLoadFlags, FreeTypeLoadTarget, StyleRule, TextStyle,
 };
 use crate::frontend::FrontEndSelection;
 use crate::keyassignment::{
@@ -22,9 +22,9 @@ use crate::unix::UnixDomain;
 use crate::wsl::WslDomain;
 use crate::{
     default_config_with_overrides_applied, default_one_point_oh, default_one_point_oh_f64,
-    default_true, GpuInfo, KeyMapPreference, LoadedConfig, MouseEventTriggerMods, RgbaColor,
-    WebGpuPowerPreference, CONFIG_DIR, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP,
-    HOME_DIR,
+    default_true, GpuInfo, IntegratedTitleButtonColor, KeyMapPreference, LoadedConfig,
+    MouseEventTriggerMods, RgbaColor, SerialDomain, WebGpuPowerPreference, CONFIG_DIRS,
+    CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
 };
 use anyhow::Context;
 use luahelper::impl_lua_conversion_dynamic;
@@ -41,7 +41,10 @@ use termwiz::surface::CursorShape;
 use wezterm_bidi::ParagraphDirectionHint;
 use wezterm_config_derive::ConfigMeta;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_input_types::{Modifiers, WindowDecorations};
+use wezterm_input_types::{
+    IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle, Modifiers,
+    UIKeyCapRendering, WindowDecorations,
+};
 use wezterm_term::TerminalSize;
 
 #[derive(Debug, Clone, FromDynamic, ToDynamic, ConfigMeta)]
@@ -76,6 +79,21 @@ pub struct Config {
 
     #[dynamic(default)]
     pub window_decorations: WindowDecorations,
+
+    #[dynamic(default = "default_integrated_title_buttons")]
+    pub integrated_title_buttons: Vec<IntegratedTitleButton>,
+
+    #[dynamic(default)]
+    pub log_unknown_escape_sequences: bool,
+
+    #[dynamic(default)]
+    pub integrated_title_button_alignment: IntegratedTitleButtonAlignment,
+
+    #[dynamic(default)]
+    pub integrated_title_button_style: IntegratedTitleButtonStyle,
+
+    #[dynamic(default)]
+    pub integrated_title_button_color: IntegratedTitleButtonColor,
 
     /// When using FontKitXXX font systems, a set of directories to
     /// search ahead of the standard font locations for fonts.
@@ -226,6 +244,8 @@ pub struct Config {
     pub font_shaper: FontShaperSelection,
 
     #[dynamic(default)]
+    pub display_pixel_geometry: DisplayPixelGeometry,
+    #[dynamic(default)]
     pub freetype_load_target: FreeTypeLoadTarget,
     #[dynamic(default)]
     pub freetype_render_target: Option<FreeTypeLoadTarget>,
@@ -292,18 +312,21 @@ pub struct Config {
     #[dynamic(default)]
     pub webgpu_preferred_adapter: Option<GpuInfo>,
 
-    #[dynamic(default = "WslDomain::default_domains")]
-    pub wsl_domains: Vec<WslDomain>,
+    #[dynamic(default)]
+    pub wsl_domains: Option<Vec<WslDomain>>,
 
     #[dynamic(default)]
     pub exec_domains: Vec<ExecDomain>,
+
+    #[dynamic(default)]
+    pub serial_ports: Vec<SerialDomain>,
 
     /// The set of unix domains
     #[dynamic(default = "UnixDomain::default_unix_domains")]
     pub unix_domains: Vec<UnixDomain>,
 
     #[dynamic(default)]
-    pub ssh_domains: Vec<SshDomain>,
+    pub ssh_domains: Option<Vec<SshDomain>>,
 
     #[dynamic(default)]
     pub ssh_backend: SshBackend,
@@ -381,6 +404,9 @@ pub struct Config {
     #[dynamic(default = "default_true")]
     pub send_composed_key_when_right_alt_is_pressed: bool,
 
+    #[dynamic(default = "default_macos_forward_mods")]
+    pub macos_forward_to_ime_modifier_mask: Modifiers,
+
     #[dynamic(default)]
     pub treat_left_ctrlalt_as_altgr: bool,
 
@@ -401,6 +427,9 @@ pub struct Config {
 
     #[dynamic(default)]
     pub tab_bar_at_bottom: bool,
+
+    #[dynamic(default = "default_true")]
+    pub mouse_wheel_scrolls_tabs: bool,
 
     /// If true, tab bar titles are prefixed with the tab index
     #[dynamic(default = "default_true")]
@@ -476,6 +505,10 @@ pub struct Config {
 
     #[dynamic(default)]
     pub background: Vec<BackgroundLayer>,
+
+    /// Only works on MacOS
+    #[dynamic(default)]
+    pub macos_window_background_blur: i64,
 
     /// Specifies the alpha value to use when rendering the background
     /// of the window.  The background is taken either from the
@@ -750,8 +783,32 @@ pub struct Config {
 
     #[dynamic(default)]
     pub quote_dropped_files: DroppedFileQuoting,
+
+    #[dynamic(default)]
+    pub ui_key_cap_rendering: UIKeyCapRendering,
+
+    #[dynamic(default = "default_one")]
+    pub palette_max_key_assigments_for_action: usize,
+
+    #[dynamic(default = "default_ulimit_nofile")]
+    pub ulimit_nofile: u64,
+
+    #[dynamic(default = "default_ulimit_nproc")]
+    pub ulimit_nproc: u64,
 }
 impl_lua_conversion_dynamic!(Config);
+
+fn default_one() -> usize {
+    1
+}
+
+fn default_ulimit_nofile() -> u64 {
+    2048
+}
+
+fn default_ulimit_nproc() -> u64 {
+    2048
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -771,16 +828,98 @@ impl Config {
         Self::load_with_overrides(&wezterm_dynamic::Value::default())
     }
 
+    /// It is relatively expensive to parse all the ssh config files,
+    /// so we defer producing the default list until someone explicitly
+    /// asks for it
+    pub fn ssh_domains(&self) -> Vec<SshDomain> {
+        if let Some(domains) = &self.ssh_domains {
+            domains.clone()
+        } else {
+            SshDomain::default_domains()
+        }
+    }
+
+    pub fn wsl_domains(&self) -> Vec<WslDomain> {
+        if let Some(domains) = &self.wsl_domains {
+            domains.clone()
+        } else {
+            WslDomain::default_domains()
+        }
+    }
+
+    pub fn update_ulimit(&self) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        {
+            use nix::sys::resource::{getrlimit, rlim_t, setrlimit, Resource};
+            use std::convert::TryInto;
+
+            let (no_file_soft, no_file_hard) = getrlimit(Resource::RLIMIT_NOFILE)?;
+
+            let ulimit_nofile: rlim_t = self.ulimit_nofile.try_into().with_context(|| {
+                format!(
+                    "ulimit_nofile value {} is out of range for this system",
+                    self.ulimit_nofile
+                )
+            })?;
+
+            if no_file_soft < ulimit_nofile {
+                setrlimit(
+                    Resource::RLIMIT_NOFILE,
+                    ulimit_nofile.min(no_file_hard),
+                    no_file_hard,
+                )
+                .with_context(|| {
+                    format!(
+                        "raise RLIMIT_NOFILE from {no_file_soft} to ulimit_nofile {}",
+                        ulimit_nofile
+                    )
+                })?;
+            }
+        }
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use nix::sys::resource::{getrlimit, rlim_t, setrlimit, Resource};
+            use std::convert::TryInto;
+
+            let (nproc_soft, nproc_hard) = getrlimit(Resource::RLIMIT_NPROC)?;
+
+            let ulimit_nproc: rlim_t = self.ulimit_nproc.try_into().with_context(|| {
+                format!(
+                    "ulimit_nproc value {} is out of range for this system",
+                    self.ulimit_nproc
+                )
+            })?;
+
+            if nproc_soft < ulimit_nproc {
+                setrlimit(
+                    Resource::RLIMIT_NPROC,
+                    ulimit_nproc.min(nproc_hard),
+                    nproc_hard,
+                )
+                .with_context(|| {
+                    format!(
+                        "raise RLIMIT_NPROC from {nproc_soft} to ulimit_nproc {}",
+                        ulimit_nproc
+                    )
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn load_with_overrides(overrides: &wezterm_dynamic::Value) -> LoadedConfig {
         // Note that the directories crate has methods for locating project
         // specific config directories, but only returns one of them, not
         // multiple.  In addition, it spawns a lot of subprocesses,
         // so we do this bit "by-hand"
 
-        let mut paths = vec![
-            PathPossibility::optional(CONFIG_DIR.join("wezterm.lua")),
-            PathPossibility::optional(HOME_DIR.join(".wezterm.lua")),
-        ];
+        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".wezterm.lua"))];
+        for dir in CONFIG_DIRS.iter() {
+            paths.push(PathPossibility::optional(dir.join("wezterm.lua")))
+        }
+
         if cfg!(windows) {
             // On Windows, a common use case is to maintain a thumb drive
             // with a set of portable tools that don't need to be installed
@@ -1007,14 +1146,18 @@ impl Config {
         for d in &self.unix_domains {
             check_domain(&d.name, "unix domain")?;
         }
-        for d in &self.ssh_domains {
-            check_domain(&d.name, "ssh domain")?;
+        if let Some(domains) = &self.ssh_domains {
+            for d in domains {
+                check_domain(&d.name, "ssh domain")?;
+            }
         }
         for d in &self.exec_domains {
             check_domain(&d.name, "exec domain")?;
         }
-        for d in &self.wsl_domains {
-            check_domain(&d.name, "wsl domain")?;
+        if let Some(domains) = &self.wsl_domains {
+            for d in domains {
+                check_domain(&d.name, "wsl domain")?;
+            }
         }
         for d in &self.tls_clients {
             check_domain(&d.name, "tls domain")?;
@@ -1175,7 +1318,9 @@ impl Config {
 
     fn compute_color_scheme_dirs(&self) -> Vec<PathBuf> {
         let mut paths = self.color_scheme_dirs.clone();
-        paths.push(CONFIG_DIR.join("colors"));
+        for dir in CONFIG_DIRS.iter() {
+            paths.push(dir.join("colors"));
+        }
         if cfg!(windows) {
             // See commentary re: portable tools above!
             if let Ok(exe_name) = std::env::current_exe() {
@@ -1335,7 +1480,7 @@ impl Config {
         }
 
         if wsl_env.is_some() || cfg!(windows) || crate::version::running_under_wsl() {
-            let mut wsl_env = wsl_env.unwrap_or_else(String::new);
+            let mut wsl_env = wsl_env.unwrap_or_default();
             if !wsl_env.is_empty() {
                 wsl_env.push(':');
             }
@@ -1370,6 +1515,11 @@ fn default_pane_select_font_size() -> f64 {
     36.0
 }
 
+fn default_integrated_title_buttons() -> Vec<IntegratedTitleButton> {
+    use IntegratedTitleButton::*;
+    vec![Hide, Maximize, Close]
+}
+
 fn default_char_select_font_size() -> f64 {
     18.0
 }
@@ -1399,7 +1549,7 @@ fn default_mux_output_parser_buffer_size() -> usize {
 }
 
 fn default_ratelimit_line_prefetches_per_second() -> u32 {
-    10
+    50
 }
 
 fn default_cursor_blink_rate() -> u64 {
@@ -1432,14 +1582,18 @@ fn default_initial_cols() -> u16 {
     80
 }
 
-fn default_hyperlink_rules() -> Vec<hyperlink::Rule> {
+pub fn default_hyperlink_rules() -> Vec<hyperlink::Rule> {
     vec![
-        // URL with a protocol
-        hyperlink::Rule::new(r"\b\w+://[\w.-]+\.[a-z]{2,15}\S*\b", "$0").unwrap(),
+        // First handle URLs wrapped with punctuation (i.e. brackets)
+        // e.g. [http://foo] (http://foo) <http://foo>
+        hyperlink::Rule::with_highlight(r"\((\w+://\S+)\)", "$1", 1).unwrap(),
+        hyperlink::Rule::with_highlight(r"\[(\w+://\S+)\]", "$1", 1).unwrap(),
+        hyperlink::Rule::with_highlight(r"<(\w+://\S+)>", "$1", 1).unwrap(),
+        // Then handle URLs not wrapped in brackets
+        // and include terminating ), / or - characters, if any
+        hyperlink::Rule::new(r"\b\w+://\S+[)/a-zA-Z0-9-]+", "$0").unwrap(),
         // implicit mailto link
         hyperlink::Rule::new(r"\b\w+@[\w-]+(\.[\w-]+)+\b", "mailto:$0").unwrap(),
-        // file://
-        hyperlink::Rule::new(r"\bfile://\S*\b", "$0").unwrap(),
     ]
 }
 
@@ -1519,6 +1673,7 @@ fn default_stateless_process_list() -> Vec<String> {
         "fish",
         "tmux",
         "nu",
+        "nu.exe",
         "cmd.exe",
         "pwsh.exe",
         "powershell.exe",
@@ -1572,20 +1727,15 @@ fn default_inactive_pane_hsb() -> HsbTransform {
     }
 }
 
-#[derive(FromDynamic, ToDynamic, Clone, Copy, Debug)]
+#[derive(FromDynamic, ToDynamic, Clone, Copy, Debug, Default)]
 pub enum DefaultCursorStyle {
     BlinkingBlock,
+    #[default]
     SteadyBlock,
     BlinkingUnderline,
     SteadyUnderline,
     BlinkingBar,
     SteadyBar,
-}
-
-impl Default for DefaultCursorStyle {
-    fn default() -> Self {
-        DefaultCursorStyle::SteadyBlock
-    }
 }
 
 impl DefaultCursorStyle {
@@ -1648,18 +1798,13 @@ pub enum NewlineCanon {
     CarriageReturnAndLineFeed,
 }
 
-#[derive(FromDynamic, ToDynamic, Clone, Copy, Debug)]
+#[derive(FromDynamic, ToDynamic, Clone, Copy, Debug, Default)]
 pub enum WindowCloseConfirmation {
+    #[default]
     AlwaysPrompt,
     NeverPrompt,
     // TODO: something smart where we see whether the
     // running programs are stateful
-}
-
-impl Default for WindowCloseConfirmation {
-    fn default() -> Self {
-        WindowCloseConfirmation::AlwaysPrompt
-    }
 }
 
 struct PathPossibility {
@@ -1682,20 +1827,15 @@ impl PathPossibility {
 }
 
 /// Behavior when the program spawned by wezterm terminates
-#[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExitBehavior {
     /// Close the associated pane
+    #[default]
     Close,
     /// Close the associated pane if the process was successful
     CloseOnCleanExit,
     /// Hold the pane until it is explicitly closed
     Hold,
-}
-
-impl Default for ExitBehavior {
-    fn default() -> Self {
-        ExitBehavior::Close
-    }
 }
 
 #[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq)]
@@ -1728,7 +1868,7 @@ impl DroppedFileQuoting {
             Self::None => s.to_string(),
             Self::SpacesOnly => s.replace(" ", "\\ "),
             // https://docs.rs/shlex/latest/shlex/fn.quote.html
-            Self::Posix => shlex::quote(s).into_owned().to_string(),
+            Self::Posix => shlex::quote(s).into_owned(),
             Self::Windows => {
                 let chars_need_quoting = [' ', '\t', '\n', '\x0b', '\"'];
                 if s.chars().any(|c| chars_need_quoting.contains(&c)) {
@@ -1762,11 +1902,12 @@ fn default_line_to_ele_shape_cache_size() -> usize {
     1024
 }
 
-#[derive(Debug, ToDynamic, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, ToDynamic, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoldBrightening {
     /// Bold doesn't influence palette selection
     No,
     /// Bold Shifts palette from 0-7 to 8-15 and preserves bold font
+    #[default]
     BrightAndBold,
     /// Bold Shifts palette from 0-7 to 8-15 and removes bold intensity
     BrightOnly,
@@ -1795,24 +1936,13 @@ impl FromDynamic for BoldBrightening {
     }
 }
 
-impl Default for BoldBrightening {
-    fn default() -> Self {
-        BoldBrightening::BrightAndBold
-    }
-}
-
-#[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ImePreeditRendering {
     /// IME preedit is rendered by WezTerm itself
+    #[default]
     Builtin,
     /// IME preedit is rendered by system
     System,
-}
-
-impl Default for ImePreeditRendering {
-    fn default() -> Self {
-        ImePreeditRendering::Builtin
-    }
 }
 
 fn validate_row_or_col(value: &u16) -> Result<(), String> {
@@ -1843,4 +1973,11 @@ pub(crate) fn validate_domain_name(name: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// <https://github.com/wez/wezterm/pull/2435>
+/// <https://github.com/wez/wezterm/issues/2771>
+/// <https://github.com/wez/wezterm/issues/2630>
+fn default_macos_forward_mods() -> Modifiers {
+    Modifiers::SHIFT
 }

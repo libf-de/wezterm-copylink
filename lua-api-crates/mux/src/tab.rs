@@ -1,5 +1,8 @@
+use config::keyassignment::PaneDirection;
+
 use super::*;
-use luahelper::to_lua;
+use luahelper::mlua::Value;
+use luahelper::{from_lua, to_lua};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
@@ -36,12 +39,17 @@ impl UserData for MuxTab {
         methods.add_method("get_title", |_, this, _: ()| {
             let mux = get_mux()?;
             let tab = this.resolve(&mux)?;
-            Ok(tab.get_title().to_string())
+            Ok(tab.get_title())
         });
         methods.add_method("set_title", |_, this, title: String| {
             let mux = get_mux()?;
             let tab = this.resolve(&mux)?;
             Ok(tab.set_title(&title))
+        });
+        methods.add_method("active_pane", |_, this, _: ()| {
+            let mux = get_mux()?;
+            let tab = this.resolve(&mux)?;
+            Ok(tab.get_active_pane().map(|pane| MuxPane(pane.pane_id())))
         });
         methods.add_method("panes", |_, this, _: ()| {
             let mux = get_mux()?;
@@ -51,6 +59,18 @@ impl UserData for MuxTab {
                 .into_iter()
                 .map(|info| MuxPane(info.pane.pane_id()))
                 .collect::<Vec<MuxPane>>())
+        });
+
+        methods.add_method("get_pane_direction", |_, this, direction: Value| {
+            let mux = get_mux()?;
+            let tab = this.resolve(&mux)?;
+            let panes = tab.iter_panes_ignoring_zoom();
+
+            let dir: PaneDirection = from_lua(direction)?;
+            let pane = tab
+                .get_pane_direction(dir, true)
+                .map(|pane_index| MuxPane(panes[pane_index].pane.pane_id()));
+            Ok(pane)
         });
 
         methods.add_method("set_zoomed", |_, this, zoomed: bool| {
@@ -108,6 +128,32 @@ impl UserData for MuxTab {
             let mux = get_mux()?;
             let tab = this.resolve(&mux)?;
             to_lua(lua, tab.get_size())
+        });
+
+        methods.add_method("activate", move |_lua, this, ()| {
+            let mux = Mux::get();
+            let tab = this.resolve(&mux)?;
+
+            let pane = tab.get_active_pane().ok_or_else(|| {
+                mlua::Error::external(format!("tab {} has no active pane!?", this.0))
+            })?;
+
+            let (_domain_id, window_id, tab_id) =
+                mux.resolve_pane_id(pane.pane_id()).ok_or_else(|| {
+                    mlua::Error::external(format!("pane {} not found", pane.pane_id()))
+                })?;
+            {
+                let mut window = mux.get_window_mut(window_id).ok_or_else(|| {
+                    mlua::Error::external(format!("window {window_id} not found"))
+                })?;
+                let tab_idx = window.idx_by_id(tab_id).ok_or_else(|| {
+                    mlua::Error::external(format!(
+                        "tab {tab_id} isn't really in window {window_id}!?"
+                    ))
+                })?;
+                window.save_and_then_set_active(tab_idx);
+            }
+            Ok(())
         });
     }
 }

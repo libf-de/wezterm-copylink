@@ -1,3 +1,7 @@
+---
+tags:
+  - keys
+---
 # `use_ime`
 
 Controls whether the Input Method Editor (IME) will be used to process keyboard
@@ -16,24 +20,22 @@ IME support is a platform dependent feature
 You can control whether the IME is enabled in your configuration file:
 
 ```lua
-return {
-  use_ime = false,
-}
+config.use_ime = false
 ```
 
 Changing `use_ime` usually requires re-launching WezTerm to take full effect.
 
-*Since: 20200620-160318-e00b076c*
+{{since('20200620-160318-e00b076c')}}
 
 The default for `use_ime` is false.  The default in earlier releases was `true`.
 
-*Since: 20220101-133340-7edc5b5a*
+{{since('20220101-133340-7edc5b5a')}}
 
 The default for X11 systems is now `true`.  Please ensure that the `XMODIFIERS`
 environment variable or the new [xim_im_name](xim_im_name.md) configuration
 option is set appropriately before wezterm is launched!  For
 example, Gnome users will probably want to set `XMODIFIERS=@im=ibus`.
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 The default for all systems is now `true`

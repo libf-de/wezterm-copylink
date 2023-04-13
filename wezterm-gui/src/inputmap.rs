@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use wezterm_dynamic::{ToDynamic, Value};
 use wezterm_term::input::MouseButton;
-use window::{KeyCode, Modifiers};
+use window::{KeyCode, Modifiers, PhysKeyCode, UIKeyCapRendering};
 
 pub struct InputMap {
     pub keys: KeyTables,
@@ -49,6 +49,37 @@ impl InputMap {
 
         if !config.disable_default_key_bindings {
             for (mods, code, action) in CommandDef::default_key_assignments(config) {
+                // If the user configures {key='p', mods='CTRL|SHIFT'} that gets
+                // normalized into {key='P', mods='CTRL'} in Config::key_bindings(),
+                // and that value exists in `keys.default` when we reach this point.
+                //
+                // When we get here with the default assignments for ActivateCommandPalette
+                // we are going to register un-normalized entries that don't match
+                // the existing normalized entry.
+                //
+                // Ideally we'd unconditionally normalize_shift
+                // here and register the result if it isn't already in the map.
+                //
+                // Our default set of assignments deliberately and explicitly emits
+                // variations on SHIFT as a workaround for an issue with
+                // normalization under X11: <https://github.com/wez/wezterm/issues/1906>.
+                // Until that is resolved, we need to keep emitting both variants.
+                //
+                // In order for the DisableDefaultAssignment behavior to work with the
+                // least surprises, and for these normalization related workarounds
+                // to continue? to work, the approach we take here is to lookup the
+                // normalized version of what we're about to register, and if we get
+                // a match, skip this key.  Otherwise register the non-normalized
+                // version from default_key_assignments().
+                //
+                // See: <https://github.com/wez/wezterm/issues/3262>
+                let (disable_code, disable_mods) = code.normalize_shift(mods);
+                if keys
+                    .default
+                    .contains_key(&(disable_code.clone(), disable_mods))
+                {
+                    continue;
+                }
                 keys.default
                     .entry((code, mods))
                     .or_insert(KeyTableEntry { action });
@@ -377,6 +408,7 @@ impl InputMap {
     /// This is used to figure out whether an application-wide keyboard shortcut
     /// can be safely configured for this action, without interfering with any
     /// transient key_table mappings.
+    #[allow(dead_code)]
     pub fn locate_app_wide_key_assignment(
         &self,
         action: &KeyAssignment,
@@ -407,7 +439,9 @@ impl InputMap {
 
     pub fn is_leader(&self, key: &KeyCode, mods: Modifiers) -> Option<std::time::Duration> {
         if let Some((leader_key, leader_mods, timeout)) = self.leader.as_ref() {
-            if *leader_key == *key && *leader_mods == mods.remove_positional_mods() {
+            if *leader_key == *key
+                && *leader_mods == mods.remove_positional_mods().remove_keyboard_status_mods()
+            {
                 return Some(timeout.clone());
             }
         }
@@ -430,7 +464,7 @@ impl InputMap {
         };
 
         table
-            .get(&key.normalize_shift(mods.remove_positional_mods()))
+            .get(&key.normalize_shift(mods.remove_positional_mods().remove_keyboard_status_mods()))
             .cloned()
     }
 
@@ -439,7 +473,10 @@ impl InputMap {
         event: MouseEventTrigger,
         mut mods: MouseEventTriggerMods,
     ) -> Option<KeyAssignment> {
-        mods.mods = mods.mods.remove_positional_mods();
+        mods.mods = mods
+            .mods
+            .remove_positional_mods()
+            .remove_keyboard_status_mods();
         self.mouse.get(&(event, mods)).cloned()
     }
 
@@ -553,7 +590,57 @@ fn section_header(title: &str) {
     println!();
 }
 
-fn human_key(key: &KeyCode) -> String {
+pub fn ui_key(key: &KeyCode, ui_key_cap_rendering: UIKeyCapRendering) -> String {
+    match key {
+        KeyCode::Char('\x1b') | KeyCode::Char('\x7f')
+            if ui_key_cap_rendering == UIKeyCapRendering::AppleSymbols =>
+        {
+            "\u{238b}".to_string()
+        }
+        KeyCode::Char('\x1b') | KeyCode::Char('\x7f') => "Esc".to_string(),
+        KeyCode::Char('\x08') if ui_key_cap_rendering == UIKeyCapRendering::AppleSymbols => {
+            "\u{232b}".to_string()
+        }
+        KeyCode::Char('\x08') => "Del".to_string(),
+        KeyCode::Char('\r') if ui_key_cap_rendering == UIKeyCapRendering::AppleSymbols => {
+            "\u{21b5}".to_string()
+        }
+        KeyCode::Char('\r') => "Enter".to_string(),
+        KeyCode::Physical(PhysKeyCode::Space) | KeyCode::Char(' ')
+            if ui_key_cap_rendering == UIKeyCapRendering::AppleSymbols =>
+        {
+            "\u{2423}".to_string()
+        }
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char('\t') if ui_key_cap_rendering == UIKeyCapRendering::AppleSymbols => {
+            "\u{21e5}".to_string()
+        }
+        KeyCode::Char('\t') => "Tab".to_string(),
+        KeyCode::Char(c) if c.is_ascii_control() => c.escape_debug().to_string(),
+        KeyCode::Char(c) => c.to_uppercase().to_string(),
+
+        KeyCode::Physical(PhysKeyCode::PageUp) | KeyCode::PageUp
+            if ui_key_cap_rendering == UIKeyCapRendering::AppleSymbols =>
+        {
+            "\u{21de}".to_string()
+        }
+        KeyCode::Physical(PhysKeyCode::PageDown) | KeyCode::PageDown
+            if ui_key_cap_rendering == UIKeyCapRendering::AppleSymbols =>
+        {
+            "\u{21df}".to_string()
+        }
+        KeyCode::Physical(PhysKeyCode::LeftArrow) | KeyCode::LeftArrow => "\u{2190}".to_string(),
+        KeyCode::Physical(PhysKeyCode::UpArrow) | KeyCode::UpArrow => "\u{2191}".to_string(),
+        KeyCode::Physical(PhysKeyCode::RightArrow) | KeyCode::RightArrow => "\u{2192}".to_string(),
+        KeyCode::Physical(PhysKeyCode::DownArrow) | KeyCode::DownArrow => "\u{2193}".to_string(),
+        KeyCode::Function(n) => format!("F{n}"),
+        KeyCode::Numpad(n) => format!("Numpad{n}"),
+        KeyCode::Physical(phys) => phys.to_string(),
+        _ => format!("{key:?}"),
+    }
+}
+
+pub fn human_key(key: &KeyCode) -> String {
     match key {
         KeyCode::Char('\x1b') => "Escape".to_string(),
         KeyCode::Char('\x7f') => "Escape".to_string(),
@@ -649,13 +736,51 @@ fn luaify(value: Value, is_top: bool) -> String {
 }
 
 fn quote_lua_string(s: &str) -> String {
-    if s.contains('\'') && !s.contains('"') {
-        format!("\"{s}\"")
-    } else if s.contains('\'') {
-        format!("\"{}\"", s.escape_debug())
-    } else {
-        format!("'{s}'")
+    let mut result = String::new();
+    result.push('\'');
+    for c in s.chars() {
+        match c {
+            '\u{07}' => {
+                result.push_str("\\a");
+            }
+            '\u{08}' => {
+                result.push_str("\\b");
+            }
+            '\u{0c}' => {
+                result.push_str("\\f");
+            }
+            '\n' => {
+                result.push_str("\\n");
+            }
+            '\r' => {
+                result.push_str("\\r");
+            }
+            '\t' => {
+                result.push_str("\\t");
+            }
+            '\u{0b}' => {
+                result.push_str("\\v");
+            }
+            '\\' => {
+                result.push_str("\\\\");
+            }
+            '"' => {
+                result.push_str("\\\"");
+            }
+            '\'' => {
+                result.push_str("\\'");
+            }
+            c if c.is_alphanumeric() || c.is_ascii_punctuation() => {
+                result.push(c);
+            }
+            _ => {
+                let b = c as u32;
+                result.push_str(&format!("\\u{{{b:x}}}"));
+            }
+        }
     }
+    result.push('\'');
+    result
 }
 
 fn lua_key(key: &KeyCode, mods: Modifiers, action: &KeyAssignment) -> String {

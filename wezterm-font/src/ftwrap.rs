@@ -205,7 +205,7 @@ impl Face {
         if res != 0 {
             None
         } else {
-            Some(String::from_utf8_lossy(&buf).into_owned().to_string())
+            Some(String::from_utf8_lossy(&buf).into_owned())
         }
     }
 
@@ -279,7 +279,7 @@ impl Face {
 
             names
                 .entry(sfnt_name.name_id as u32)
-                .or_insert_with(|| vec![])
+                .or_insert_with(Vec::new)
                 .push(NameRecord {
                     platform_id: sfnt_name.platform_id,
                     encoding_id: sfnt_name.encoding_id,
@@ -612,7 +612,7 @@ impl Face {
     }
 
     pub fn set_transform(&mut self, matrix: Option<FT_Matrix>) {
-        let mut matrix = matrix.clone();
+        let mut matrix = matrix;
         unsafe {
             FT_Set_Transform(
                 self.face,

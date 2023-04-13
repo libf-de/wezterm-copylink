@@ -1,6 +1,10 @@
+---
+tags:
+  - mouse
+---
 # `swallow_mouse_click_on_window_focus`
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 When set to `true`, clicking on a wezterm window will focus it.
 

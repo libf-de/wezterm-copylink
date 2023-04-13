@@ -1,6 +1,10 @@
+---
+tags:
+  - font
+---
 # `freetype_load_flags = "DEFAULT"`
 
-*Since: 20210314-114017-04b7cedd*
+{{since('20210314-114017-04b7cedd')}}
 
 An advanced option to fine tune the freetype rasterizer.  This is a bitfield,
 so you can combine one or more of these options together, separated by the `|`
@@ -21,10 +25,8 @@ Available flags are:
 * `NO_AUTOHINT` - don't use the freetype auto-hinter
 
 ```lua
-return {
-  -- You probably don't want to do this, but this demonstrates
-  -- that the flags can be combined
-  freetype_load_flags = 'NO_HINTING|MONOCHROME',
-}
+-- You probably don't want to do this, but this demonstrates
+-- that the flags can be combined
+config.freetype_load_flags = 'NO_HINTING|MONOCHROME'
 ```
 

@@ -1,3 +1,8 @@
+---
+tags:
+  - appearance
+  - font
+---
 # `bold_brightens_ansi_colors = true`
 
 When true (the default), PaletteIndex 0-7 are shifted to bright when the font
@@ -12,7 +17,7 @@ assumes that Black+Bold renders as a Dark Grey which is
 legible on a Black background, but if this option is set to
 false, it would render as Black on Black.
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 This option can now have one of three values:
 

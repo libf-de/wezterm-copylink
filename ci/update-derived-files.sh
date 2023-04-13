@@ -15,3 +15,31 @@ for mode in copy_mode search_mode ; do
   target/debug/wezterm -n show-keys --lua --key-table $mode >> $fname
   echo "\`\`\`" >> $fname
 done
+
+cargo run --example narrow $PWD/target/debug/wezterm --help | ./target/debug/strip-ansi-escapes > docs/examples/cmd-synopsis-wezterm--help.txt
+
+for cmd in start ssh serial connect ls-fonts show-keys imgcat set-working-directory record replay  ; do
+  fname="docs/examples/cmd-synopsis-wezterm-${cmd}--help.txt"
+  cargo run --example narrow $PWD/target/debug/wezterm $cmd --help | ./target/debug/strip-ansi-escapes > $fname
+done
+
+for cmd in \
+    activate-pane \
+    activate-pane-direction \
+    activate-tab \
+    get-pane-direction \
+    get-text \
+    kill-pane \
+    list \
+    list-clients \
+    move-pane-to-new-tab \
+    rename-workspace \
+    send-text \
+    set-tab-title \
+    set-window-title \
+    spawn \
+    split-pane \
+    ; do
+  fname="docs/examples/cmd-synopsis-wezterm-cli-${cmd}--help.txt"
+  cargo run --example narrow $PWD/target/debug/wezterm cli $cmd --help | ./target/debug/strip-ansi-escapes > $fname
+done

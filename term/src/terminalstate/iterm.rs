@@ -35,7 +35,15 @@ impl TerminalState {
         };
 
         if let Err(err) = check_image_dimensions(info.width, info.height) {
-            log::error!("{}", err);
+            log::error!("{err:#}, {info:#?}");
+            return;
+        }
+
+        if self.pixel_width == 0 || self.pixel_height == 0 {
+            error!(
+                "my pixel dimensions are wacky! {}x{}",
+                self.pixel_width, self.pixel_height
+            );
             return;
         }
 
@@ -95,7 +103,10 @@ impl TerminalState {
 
         let downscaled = (width < info.width as usize) || (height < info.height as usize);
         let data = match (downscaled, info.format) {
-            (true, ImageFormat::Gif) | (true, ImageFormat::Png) | (false, _) => {
+            (true, ImageFormat::Gif)
+            | (true, ImageFormat::Png)
+            | (true, ImageFormat::WebP)
+            | (false, _) => {
                 // Don't resample things that might be animations,
                 // or things that don't need resampling
                 ImageDataType::EncodedFile(image.data)
@@ -110,7 +121,14 @@ impl TerminalState {
             },
         };
 
-        let image_data = self.raw_image_to_image_data(data);
+        let image_data = match self.raw_image_to_image_data(data) {
+            Ok(d) => d,
+            Err(err) => {
+                log::error!("error processing image data: {err:#}");
+                return;
+            }
+        };
+
         if let Err(err) = self.assign_image_to_cells(ImageAttachParams {
             image_width: width as u32,
             image_height: height as u32,

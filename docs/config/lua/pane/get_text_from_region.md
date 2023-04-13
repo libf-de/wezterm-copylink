@@ -1,6 +1,6 @@
 # `pane:get_text_from_region(start_x, start_y, end_x, end_y)`
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 Returns the text from the specified region.
 

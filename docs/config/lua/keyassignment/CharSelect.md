@@ -1,6 +1,6 @@
-# CharSelect
+# `CharSelect`
 
-*Since: 20220903-194523-3bb1ed61*
+{{since('20220903-194523-3bb1ed61')}}
 
 Activates *Character Selection Mode*, which is a pop-over modal that allows you
 to browse characters by category as well as fuzzy search by name or hex unicode
@@ -42,22 +42,17 @@ This action is by default assigned to `CTRL-SHIFT-U` (`U` for `Unicode`).
 The default assignment is equivalent to this config:
 
 ```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
+-- Control the size of the font.
+-- Uses the same font as window_frame.font
+-- char_select_font_size = 18.0,
 
-return {
-  -- Control the size of the font.
-  -- Uses the same font as window_frame.font
-  -- char_select_font_size = 18.0,
-
-  keys = {
-    {
-      key = 'u',
-      mods = 'SHIFT|CTRL',
-      action = act.CharSelect {
-        copy_on_select = true,
-        copy_to = 'ClipboardAndPrimarySelection',
-      },
+config.keys = {
+  {
+    key = 'u',
+    mods = 'SHIFT|CTRL',
+    action = wezterm.action.CharSelect {
+      copy_on_select = true,
+      copy_to = 'ClipboardAndPrimarySelection',
     },
   },
 }

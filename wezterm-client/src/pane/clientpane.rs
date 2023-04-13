@@ -1,10 +1,11 @@
-use crate::domain::{ClientDomain, ClientInner};
+use crate::domain::ClientInner;
 use crate::pane::mousestate::MouseState;
 use crate::pane::renderable::{hydrate_lines, RenderableInner, RenderableState};
 use anyhow::bail;
 use async_trait::async_trait;
 use codec::*;
 use config::configuration;
+use config::keyassignment::ScrollbackEraseMode;
 use mux::domain::DomainId;
 use mux::pane::{
     alloc_pane_id, CloseReason, ForEachPaneLogicalLine, LogicalLine, Pane, PaneId, Pattern,
@@ -26,7 +27,8 @@ use url::Url;
 use wezterm_dynamic::Value;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
-    Alert, Clipboard, KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, TerminalSize,
+    Alert, Clipboard, KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex,
+    TerminalConfiguration, TerminalSize,
 };
 
 pub struct ClientPane {
@@ -35,13 +37,17 @@ pub struct ClientPane {
     pub remote_pane_id: PaneId,
     pub remote_tab_id: TabId,
     pub renderable: Mutex<RenderableState>,
+    configured_palette: Mutex<ColorPalette>,
     palette: Mutex<ColorPalette>,
+    application_palette: Mutex<bool>,
     writer: Mutex<PaneWriter>,
     mouse: Arc<Mutex<MouseState>>,
     clipboard: Mutex<Option<Arc<dyn Clipboard>>>,
     mouse_grabbed: Mutex<bool>,
     ignore_next_kill: Mutex<bool>,
     user_vars: Mutex<HashMap<String, String>>,
+    config: Mutex<Option<Arc<dyn TerminalConfiguration>>>,
+    unseen_output: Mutex<bool>,
 }
 
 impl ClientPane {
@@ -90,19 +96,39 @@ impl ClientPane {
         let config = configuration();
         let palette: ColorPalette = config.resolved_palette.clone().into();
 
+        // Advise the server of our palette preference
+        promise::spawn::spawn({
+            let palette = palette.clone();
+            let client = Arc::clone(client);
+            async move {
+                client
+                    .client
+                    .set_configured_palette_for_pane(SetPalette {
+                        pane_id: remote_pane_id,
+                        palette,
+                    })
+                    .await
+            }
+        })
+        .detach();
+
         Self {
             client: Arc::clone(client),
             mouse,
             remote_pane_id,
             local_pane_id,
             remote_tab_id,
+            application_palette: Mutex::new(false),
             renderable: Mutex::new(render),
             writer: Mutex::new(writer),
+            configured_palette: Mutex::new(palette.clone()),
             palette: Mutex::new(palette),
             clipboard: Mutex::new(None),
             mouse_grabbed: Mutex::new(false),
             ignore_next_kill: Mutex::new(false),
+            unseen_output: Mutex::new(false),
             user_vars: Mutex::new(HashMap::new()),
+            config: Mutex::new(None),
         }
     }
 
@@ -141,8 +167,11 @@ impl ClientPane {
                 }
             },
             Pdu::SetPalette(SetPalette { palette, .. }) => {
+                *self.application_palette.lock() = palette != *self.configured_palette.lock();
+
                 *self.palette.lock() = palette;
                 let mux = Mux::get();
+                self.renderable.lock().inner.borrow_mut().make_all_stale();
                 mux.notify(MuxNotification::Alert {
                     pane_id: self.local_pane_id,
                     alert: Alert::PaletteChanged,
@@ -153,6 +182,13 @@ impl ClientPane {
                 match &alert {
                     Alert::SetUserVar { name, value } => {
                         self.user_vars.lock().insert(name.clone(), value.clone());
+                    }
+                    Alert::OutputSinceFocusLost => {
+                        *self.unseen_output.lock() = true;
+                        mux.notify(MuxNotification::Alert {
+                            pane_id: self.local_pane_id,
+                            alert: Alert::OutputSinceFocusLost,
+                        });
                     }
                     _ => {}
                 }
@@ -168,6 +204,23 @@ impl ClientPane {
                 mux.prune_dead_windows();
 
                 self.client.expire_stale_mappings();
+            }
+            Pdu::PaneFocused(PaneFocused { pane_id }) => {
+                // We get here whenever the pane focus is changed on the
+                // server. That might be due to the user here in the GUI
+                // doing things, or it may be due to a "remote"
+                // `wezterm cli activate-pane-direction` or similar call
+                // from some other actor.
+                // The latter case is the important one: it is desirable
+                // for the focus change to be reflected locally after it
+                // has been changed on the server, so we work to apply
+                // it here.
+                log::trace!("advised of remote pane focus: {pane_id}");
+
+                let mux = Mux::get();
+                if let Err(err) = mux.focus_pane_and_containing_tab(self.local_pane_id) {
+                    log::error!("Error reconciling remote PaneFocused notification: {err:#}");
+                }
             }
             _ => bail!("unhandled unilateral pdu: {:?}", pdu),
         };
@@ -327,9 +380,15 @@ impl Pane for ClientPane {
         let cols = size.cols as usize;
         let rows = size.rows as usize;
 
-        if inner.dimensions.cols != cols || inner.dimensions.viewport_rows != rows {
+        if inner.dimensions.cols != cols
+            || inner.dimensions.viewport_rows != rows
+            || inner.dimensions.pixel_width != size.pixel_width
+            || inner.dimensions.pixel_height != size.pixel_height
+        {
             inner.dimensions.cols = cols;
             inner.dimensions.viewport_rows = rows;
+            inner.dimensions.pixel_width = size.pixel_width;
+            inner.dimensions.pixel_height = size.pixel_height;
 
             // Invalidate any cached rows on a resize
             inner.make_all_stale();
@@ -443,39 +502,10 @@ impl Pane for ClientPane {
                     .kill_pane(KillPane {
                         pane_id: remote_pane_id,
                     })
-                    .await?;
-
-                // Arrange to resync the layout, to avoid artifacts
-                // <https://github.com/wez/wezterm/issues/1277>.
-                // We need a short delay to avoid racing with the observable
-                // effects of killing the pane.
-                // <https://github.com/wez/wezterm/issues/1752#issuecomment-1088269363>
-                smol::Timer::after(std::time::Duration::from_millis(200)).await;
-                let mux = Mux::get();
-                let client_domain = mux
-                    .get_domain(local_domain_id)
-                    .ok_or_else(|| anyhow::anyhow!("no such domain {}", local_domain_id))?;
-                let client_domain =
-                    client_domain
-                        .downcast_ref::<ClientDomain>()
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "domain {} is not a ClientDomain instance",
-                                local_domain_id
-                            )
-                        })?;
-
-                client_domain.resync().await?;
-                anyhow::Result::<()>::Ok(())
+                    .await
             })
             .detach();
         }
-        // Explicitly mark ourselves as dead.
-        // Ideally we'd discover this later when polling the
-        // status, but killing the pane prevents the server
-        // side from sending us further data.
-        // <https://github.com/wez/wezterm/issues/1752>
-        self.renderable.lock().inner.borrow_mut().dead = true;
     }
 
     fn mouse_event(&self, event: MouseEvent) -> anyhow::Result<()> {
@@ -514,7 +544,23 @@ impl Pane for ClientPane {
     fn focus_changed(&self, focused: bool) {
         if focused {
             self.advise_focus();
+            *self.unseen_output.lock() = false;
         }
+    }
+
+    fn erase_scrollback(&self, erase_mode: ScrollbackEraseMode) {
+        let client = Arc::clone(&self.client);
+        let remote_pane_id = self.remote_pane_id;
+        promise::spawn::spawn(async move {
+            client
+                .client
+                .erase_scrollback(EraseScrollbackRequest {
+                    pane_id: remote_pane_id,
+                    erase_mode,
+                })
+                .await
+        })
+        .detach();
     }
 
     fn advise_focus(&self) {
@@ -535,6 +581,10 @@ impl Pane for ClientPane {
         }
     }
 
+    fn has_unseen_output(&self) -> bool {
+        *self.unseen_output.lock()
+    }
+
     fn can_close_without_prompting(&self, reason: CloseReason) -> bool {
         match reason {
             CloseReason::Window => true,
@@ -545,6 +595,36 @@ impl Pane for ClientPane {
 
     fn copy_user_vars(&self) -> HashMap<String, String> {
         self.user_vars.lock().clone()
+    }
+
+    fn set_config(&self, config: Arc<dyn TerminalConfiguration>) {
+        let palette = config.color_palette();
+        // If the application running in the pane hasn't changed the
+        // palette through escape sequences, speculatively adopt the
+        // new palette so that it updates with the lowest latency.
+        if !*self.application_palette.lock() {
+            *self.palette.lock() = palette.clone();
+        }
+        *self.configured_palette.lock() = palette.clone();
+
+        // and now send the color palette to the server
+        let client = Arc::clone(&self.client);
+        let remote_pane_id = self.remote_pane_id;
+        promise::spawn::spawn(async move {
+            client
+                .client
+                .set_configured_palette_for_pane(SetPalette {
+                    pane_id: remote_pane_id,
+                    palette,
+                })
+                .await
+        })
+        .detach();
+        self.config.lock().replace(config);
+    }
+
+    fn get_config(&self) -> Option<Arc<dyn TerminalConfiguration>> {
+        self.config.lock().clone()
     }
 }
 

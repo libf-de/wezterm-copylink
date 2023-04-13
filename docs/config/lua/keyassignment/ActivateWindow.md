@@ -1,6 +1,6 @@
-# ActivateWindow(n)
+# `ActivateWindow(n)`
 
-*since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 Activates the *nth* GUI window, zero-based.
 
@@ -15,20 +15,19 @@ Here's an example of setting up hotkeys to activate specific windows:
 ```lua
 local wezterm = require 'wezterm'
 local act = wezterm.action
+local config = {}
 
-local mykeys = {}
+config.keys = {}
 for i = 1, 8 do
   -- CMD+ALT + number to activate that window
-  table.insert(mykeys, {
+  table.insert(config.keys, {
     key = tostring(i),
     mods = 'CMD|ALT',
     action = act.ActivateWindow(i - 1),
   })
 end
 
-return {
-  keys = mykeys,
-}
+return config
 ```
 
 

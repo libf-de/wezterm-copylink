@@ -1,6 +1,10 @@
+---
+tags:
+  - tuning
+---
 # `animation_fps = 10`
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 This setting controls the maximum frame rate used when rendering easing effects
 for blinking cursors, blinking text and visual bell.
@@ -14,10 +18,8 @@ If you are running with a CPU renderer (eg: you have [front_end](front_end.md)
 transitions:
 
 ```lua
-return {
-  animation_fps = 1,
-  cursor_blink_ease_in = 'Constant',
-  cursor_blink_ease_out = 'Constant',
-}
+config.animation_fps = 1
+config.cursor_blink_ease_in = 'Constant'
+config.cursor_blink_ease_out = 'Constant'
 ```
 

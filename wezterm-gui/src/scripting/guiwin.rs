@@ -45,6 +45,14 @@ impl UserData for GuiWin {
         methods.add_method("mux_window", |_, this, _: ()| {
             Ok(mux_lua::MuxWindow(this.mux_window_id))
         });
+        methods.add_method("active_tab", |_, this, _: ()| {
+            let mux = Mux::try_get().ok_or_else(|| mlua::Error::external("cannot get Mux!?"))?;
+            let window = mux.get_window(this.mux_window_id).ok_or_else(|| {
+                mlua::Error::external(format!("invalid window {}", this.mux_window_id))
+            })?;
+            Ok(window.get_active().map(|tab| mux_lua::MuxTab(tab.tab_id())))
+        });
+
         methods.add_method(
             "set_inner_size",
             |_, this, (width, height): (usize, usize)| {
@@ -148,14 +156,17 @@ impl UserData for GuiWin {
             let result = rx.recv().await.map_err(mlua::Error::external)?;
             luahelper::dynamic_to_lua_value(lua, result)
         });
-        methods.add_method(
+        methods.add_async_method(
             "perform_action",
-            |_, this, (assignment, pane): (KeyAssignment, MuxPane)| {
+            |_, this, (assignment, pane): (KeyAssignment, MuxPane)| async move {
+                let (tx, rx) = smol::channel::bounded(1);
                 this.window.notify(TermWindowNotif::PerformAssignment {
                     pane_id: pane.0,
                     assignment,
+                    tx: Some(tx),
                 });
-                Ok(())
+                let result = rx.recv().await.map_err(mlua::Error::external)?;
+                result.map_err(mlua::Error::external)
             },
         );
         methods.add_async_method("effective_config", |_, this, _: ()| async move {

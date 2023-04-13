@@ -7,20 +7,15 @@ use std::hash::Hash;
 
 /// Specify how FromDynamic will treat unknown fields
 /// when converting from Value to a given target type
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum UnknownFieldAction {
     /// Don't check, don't warn, don't raise an error
     Ignore,
     /// Emit a log::warn log
+    #[default]
     Warn,
     /// Return an Error
     Deny,
-}
-
-impl Default for UnknownFieldAction {
-    fn default() -> UnknownFieldAction {
-        UnknownFieldAction::Warn
-    }
 }
 
 /// Specify various options for FromDynamic::from_dynamic
@@ -189,7 +184,7 @@ impl FromDynamic for char {
         match value {
             Value::String(s) => {
                 let mut iter = s.chars();
-                let c = iter.next().ok_or_else(|| Error::CharFromWrongSizedString)?;
+                let c = iter.next().ok_or(Error::CharFromWrongSizedString)?;
                 if iter.next().is_some() {
                     Err(Error::CharFromWrongSizedString)
                 } else {

@@ -1,4 +1,8 @@
-# window_padding
+---
+tags:
+  - appearance
+---
+# `window_padding`
 
 Controls the amount of padding between the window border and the
 terminal cells.
@@ -11,17 +15,15 @@ enabled the scrollbar and have set `right` to `0` then the right padding
 (and thus the scrollbar width) will instead match the width of a cell.
 
 ```lua
-return {
-  window_padding = {
-    left = 2,
-    right = 2,
-    top = 0,
-    bottom = 0,
-  },
+config.window_padding = {
+  left = 2,
+  right = 2,
+  top = 0,
+  bottom = 0,
 }
 ```
 
-*Since: 20211204-082213-a66c61ee9*
+{{since('20211204-082213-a66c61ee9')}}
 
 You may now express padding using a number of different units by specifying
 a string value with a unit suffix:
@@ -36,13 +38,11 @@ You may use a fractional number such as `"0.5cell"` or numbers large than one su
 The default padding is shown below.  In earlier releases, the default padding was 0 for each of the possible edges.
 
 ```lua
-return {
-  window_padding = {
-    left = '1cell',
-    right = '1cell',
-    top = '0.5cell',
-    bottom = '0.5cell',
-  },
+config.window_padding = {
+  left = '1cell',
+  right = '1cell',
+  top = '0.5cell',
+  bottom = '0.5cell',
 }
 ```
 

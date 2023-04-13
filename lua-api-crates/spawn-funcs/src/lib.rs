@@ -18,13 +18,9 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
 
 fn open_with<'lua>(_: &'lua Lua, (url, app): (String, Option<String>)) -> mlua::Result<()> {
     if let Some(app) = app {
-        open::with_in_background(url, app);
+        wezterm_open_url::open_with(&url, &app);
     } else {
-        std::thread::spawn(move || {
-            if let Err(err) = open::that(&url) {
-                log::error!("Error opening {}: {:#}", url, err);
-            }
-        });
+        wezterm_open_url::open_url(&url);
     }
     Ok(())
 }
@@ -45,7 +41,7 @@ async fn run_child_process<'lua>(
         cmd.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output().await.map_err(|e| mlua::Error::external(e))?;
+    let output = cmd.output().await.map_err(mlua::Error::external)?;
 
     Ok((
         output.status.success(),
@@ -69,7 +65,7 @@ async fn background_child_process<'lua>(_: &'lua Lua, args: Vec<String>) -> mlua
 
     cmd.stdin(smol::process::Stdio::null())
         .spawn()
-        .map_err(|e| mlua::Error::external(e))?;
+        .map_err(mlua::Error::external)?;
 
     Ok(())
 }

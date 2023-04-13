@@ -49,12 +49,22 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::time::Instant;
 use wezterm_font::FontConfiguration;
-use wezterm_input_types::is_ascii_control;
+use wezterm_input_types::{is_ascii_control, IntegratedTitleButtonStyle};
 
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsPlacementTopLeft: NSInteger = 11;
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGSMainConnectionID() -> id;
+    fn CGSSetWindowBackgroundBlurRadius(
+        connection_id: id,
+        window_id: NSInteger,
+        radius: i64,
+    ) -> i32;
+}
 
 fn round_away_from_zerof(value: f64) -> f64 {
     if value > 0. {
@@ -373,6 +383,7 @@ fn function_key_to_keycode(function_key: char) -> KeyCode {
         appkit::NSEndFunctionKey => KeyCode::End,
         appkit::NSPageUpFunctionKey => KeyCode::PageUp,
         appkit::NSPageDownFunctionKey => KeyCode::PageDown,
+        appkit::NSClearLineFunctionKey => KeyCode::NumLock,
         value @ appkit::NSF1FunctionKey..=appkit::NSF35FunctionKey => {
             KeyCode::Function((value - appkit::NSF1FunctionKey + 1) as u8)
         }
@@ -442,7 +453,10 @@ impl Window {
         };
 
         unsafe {
-            let style_mask = decoration_to_mask(config.window_decorations);
+            let style_mask = decoration_to_mask(
+                config.window_decorations,
+                config.integrated_title_button_style,
+            );
             let rect = NSRect::new(
                 NSPoint::new(0., 0.),
                 NSSize::new(width as f64, height as f64),
@@ -486,7 +500,11 @@ impl Window {
                 NO,
             ));
 
-            apply_decorations_to_window(&window, config.window_decorations);
+            apply_decorations_to_window(
+                &window,
+                config.window_decorations,
+                config.integrated_title_button_style,
+            );
 
             // Prevent Cocoa native tabs from being used
             let _: () = msg_send![*window, setTabbingMode:2 /* NSWindowTabbingModeDisallowed */];
@@ -561,6 +579,11 @@ impl Window {
                 setLayerContentsPlacement: NSViewLayerContentsPlacementTopLeft
             ];
 
+            CGSSetWindowBackgroundBlurRadius(
+                CGSMainConnectionID(),
+                window.windowNumber(),
+                config.macos_window_background_blur,
+            );
             window.setContentView_(*view);
             window.setDelegate_(*view);
 
@@ -910,7 +933,11 @@ impl WindowInner {
 
     fn apply_decorations(&mut self) {
         if !self.is_fullscreen() {
-            apply_decorations_to_window(&self.window, self.config.window_decorations);
+            apply_decorations_to_window(
+                &self.window,
+                self.config.window_decorations,
+                self.config.integrated_title_button_style,
+            );
         }
     }
 
@@ -959,7 +986,11 @@ impl WindowInner {
                 Some(saved_rect) => unsafe {
                     // Restore prior dimensions
                     self.window.orderOut_(nil);
-                    apply_decorations_to_window(&self.window, self.config.window_decorations);
+                    apply_decorations_to_window(
+                        &self.window,
+                        self.config.window_decorations,
+                        self.config.integrated_title_button_style,
+                    );
                     self.window.setFrame_display_(saved_rect, YES);
                     self.window.makeKeyAndOrderFront_(nil);
                     self.window.setOpaque_(NO);
@@ -1026,6 +1057,16 @@ impl WindowInner {
             self.window.setHasShadow_(shadow);
         }
     }
+
+    fn update_window_background_blur(&mut self) {
+        unsafe {
+            CGSSetWindowBackgroundBlurRadius(
+                CGSMainConnectionID(),
+                self.window.windowNumber(),
+                self.config.macos_window_background_blur,
+            );
+        }
+    }
 }
 
 impl WindowInner {
@@ -1040,7 +1081,11 @@ impl WindowInner {
             // stuck with a scale factor of 2 despite us having configured 1.
             self.window
                 .setStyleMask_(NSWindowStyleMask::NSBorderlessWindowMask);
-            apply_decorations_to_window(&self.window, self.config.window_decorations);
+            apply_decorations_to_window(
+                &self.window,
+                self.config.window_decorations,
+                self.config.integrated_title_button_style,
+            );
 
             self.window.makeKeyAndOrderFront_(nil)
         }
@@ -1194,16 +1239,34 @@ impl WindowInner {
             window_view.inner.borrow_mut().config = config.clone();
         }
         self.update_window_shadow();
+        self.update_window_background_blur();
         self.apply_decorations();
     }
 }
 
-fn apply_decorations_to_window(window: &StrongPtr, decorations: WindowDecorations) {
-    let mask = decoration_to_mask(decorations);
+fn effective_decorations(
+    mut decorations: WindowDecorations,
+    integrated_title_button_style: IntegratedTitleButtonStyle,
+) -> WindowDecorations {
+    if integrated_title_button_style != IntegratedTitleButtonStyle::MacOsNative {
+        decorations.remove(WindowDecorations::INTEGRATED_BUTTONS);
+    }
+    decorations
+}
+
+fn apply_decorations_to_window(
+    window: &StrongPtr,
+    decorations: WindowDecorations,
+    integrated_title_button_style: IntegratedTitleButtonStyle,
+) {
+    let mask = decoration_to_mask(decorations, integrated_title_button_style);
+    let decorations = effective_decorations(decorations, integrated_title_button_style);
     unsafe {
         window.setStyleMask_(mask);
 
-        let hidden = if decorations.contains(WindowDecorations::TITLE) {
+        let hidden = if decorations.contains(WindowDecorations::TITLE)
+            || decorations.contains(WindowDecorations::INTEGRATED_BUTTONS)
+        {
             NO
         } else {
             YES
@@ -1224,17 +1287,32 @@ fn apply_decorations_to_window(window: &StrongPtr, decorations: WindowDecoration
         } else {
             appkit::NSWindowTitleVisibility::NSWindowTitleHidden
         });
-        window.setTitlebarAppearsTransparent_(hidden);
+        if decorations.contains(WindowDecorations::INTEGRATED_BUTTONS) {
+            window.setTitlebarAppearsTransparent_(YES);
+        } else {
+            window.setTitlebarAppearsTransparent_(hidden);
+        }
     }
 }
 
-fn decoration_to_mask(decorations: WindowDecorations) -> NSWindowStyleMask {
+fn decoration_to_mask(
+    decorations: WindowDecorations,
+    integrated_title_button_style: IntegratedTitleButtonStyle,
+) -> NSWindowStyleMask {
+    let decorations = effective_decorations(decorations, integrated_title_button_style);
+    let decorations = decorations.difference(
+        WindowDecorations::MACOS_FORCE_DISABLE_SHADOW
+            | WindowDecorations::MACOS_FORCE_ENABLE_SHADOW,
+    );
     if decorations == WindowDecorations::TITLE | WindowDecorations::RESIZE {
         NSWindowStyleMask::NSTitledWindowMask
             | NSWindowStyleMask::NSClosableWindowMask
             | NSWindowStyleMask::NSMiniaturizableWindowMask
             | NSWindowStyleMask::NSResizableWindowMask
-    } else if decorations == WindowDecorations::RESIZE {
+    } else if decorations == WindowDecorations::RESIZE
+        || decorations == WindowDecorations::INTEGRATED_BUTTONS
+        || decorations == WindowDecorations::INTEGRATED_BUTTONS | WindowDecorations::RESIZE
+    {
         NSWindowStyleMask::NSTitledWindowMask
             | NSWindowStyleMask::NSClosableWindowMask
             | NSWindowStyleMask::NSMiniaturizableWindowMask
@@ -1601,6 +1679,9 @@ fn key_modifiers(flags: NSEventModifierFlags) -> Modifiers {
     }
     if flags.contains(NSEventModifierFlags::NSCommandKeyMask) {
         mods |= Modifiers::SUPER;
+    }
+    if flags.bits() & (1 << 16) != 0 {
+        mods |= Modifiers::CAPS_LOCK;
     }
 
     mods
@@ -2354,7 +2435,8 @@ impl WindowView {
             } else if only_right_alt && !send_composed_key_when_right_alt_is_pressed {
                 false
             } else {
-                true
+                modifiers.is_empty()
+                    || modifiers.intersects(config_handle.macos_forward_to_ime_modifier_mask)
             }
         };
 
@@ -2520,7 +2602,8 @@ impl WindowView {
                 key_is_down,
                 raw: Some(raw_key_event),
             }
-            .normalize_shift();
+            .normalize_shift()
+            .resurface_positional_modifier_key();
 
             log::debug!(
                 "key_common {:?} (chars={:?} unmod={:?} modifiers={:?})",
@@ -2632,6 +2715,12 @@ impl WindowView {
 
             let live_resizing = inner.live_resizing;
 
+            let is_zoomed = !is_full_screen
+                && inner.window.as_ref().map_or(false, |window| {
+                    let window = window.load();
+                    unsafe { msg_send![*window, isZoomed] }
+                });
+
             inner.events.dispatch(WindowEvent::Resized {
                 dimensions: Dimensions {
                     pixel_width: width as usize,
@@ -2641,6 +2730,8 @@ impl WindowView {
                 },
                 window_state: if is_full_screen {
                     WindowState::FULL_SCREEN
+                } else if is_zoomed {
+                    WindowState::MAXIMIZED
                 } else {
                     WindowState::default()
                 },

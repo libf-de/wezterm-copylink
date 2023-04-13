@@ -1,6 +1,14 @@
+---
+title: wezterm.shell_split
+tags:
+ - utility
+ - open
+ - spawn
+ - string
+---
 # wezterm.shell_split(line)
 
-*Since: 20220807-113146-c2fee766*
+{{since('20220807-113146-c2fee766')}}
 
 Splits a command line into an argument array according to posix shell rules.
 

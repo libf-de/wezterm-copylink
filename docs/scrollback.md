@@ -1,5 +1,3 @@
-## Scrollback
-
 WezTerm provides a searchable scrollback buffer with a configurable maximum
 size limit that allows you to review information that doesn't fit in the
 physical window size.  As content is printed to the display the display may be
@@ -9,7 +7,7 @@ down.
 
 This section describes working with the scrollback and discusses some
 configuration options; be sure to read the [configuration
-docs](config/files.html) to learn how to change your settings!
+docs](config/files.md) to learn how to change your settings!
 
 ### Controlling the scrollback size
 
@@ -20,10 +18,8 @@ may put some pressure on your system depending on the amount of RAM
 you have available.
 
 ```lua
-return {
-  -- How many lines of scrollback you want to retain per tab
-  scrollback_lines = 3500,
-}
+-- How many lines of scrollback you want to retain per tab
+config.scrollback_lines = 3500
 ```
 
 ### Clearing the scrollback buffer
@@ -41,16 +37,14 @@ You can control whether WezTerm displays a scrollbar via your configuration
 file:
 
 ```lua
-return {
-  -- Enable the scrollbar.
-  -- It will occupy the right window padding space.
-  -- If right padding is set to 0 then it will be increased
-  -- to a single cell width
-  enable_scroll_bar = true,
-}
+-- Enable the scrollbar.
+-- It will occupy the right window padding space.
+-- If right padding is set to 0 then it will be increased
+-- to a single cell width
+config.enable_scroll_bar = true
 ```
 
-You may [change the color of the scrollbar](config/appearance.html#defining-your-own-colors) if you wish!
+You may [change the color of the scrollbar](config/appearance.md#defining-your-own-colors) if you wish!
 
 ### Scrolling without a scrollbar
 
@@ -87,7 +81,7 @@ When the search overlay is active the behavior of wezterm changes:
 
 #### Configurable search mode key assignments
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 The key assignments for search mode are specified by the `search_mode` [Key Table](config/key-tables.md).
 
@@ -103,13 +97,13 @@ may be more recent than your version of wezterm) is shown below.
 You can see the configuration in your version of wezterm by running
 `wezterm show-keys --lua --key-table search_mode`.
 
-{{#include examples/default-search-mode-key-table.markdown}}
+{% include "examples/default-search-mode-key-table.markdown" %}
 
 (Those assignments reference `CopyMode` because search mode is a facet of [Copy Mode](copymode.md)).
 
 ### Configuring Saved Searches
 
-*since: 20200607-144723-74889cd4*
+{{since('20200607-144723-74889cd4')}}
 
 If you find that you're often searching for the same things then you may wish to assign
 a keybinding to trigger that search.
@@ -119,15 +113,12 @@ for your mouse to copy and paste a relevant git commit hash then you might like
 this:
 
 ```lua
-local wezterm = require 'wezterm'
-return {
-  keys = {
-    -- search for things that look like git hashes
-    {
-      key = 'H',
-      mods = 'SHIFT|CTRL',
-      action = wezterm.action.Search { Regex = '[a-f0-9]{6,}' },
-    },
+config.keys = {
+  -- search for things that look like git hashes
+  {
+    key = 'H',
+    mods = 'SHIFT|CTRL',
+    action = wezterm.action.Search { Regex = '[a-f0-9]{6,}' },
   },
 }
 ```
@@ -143,5 +134,5 @@ With that in your config you can now:
 
 without needing to reach for your mouse.
 
-See [the Search action docs](config/lua/keyassignment/Search.html) for more information on
+See [the Search action docs](config/lua/keyassignment/Search.md) for more information on
 using the `Search` action.

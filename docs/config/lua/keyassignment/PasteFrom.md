@@ -1,4 +1,4 @@
-# PasteFrom(source)
+# `PasteFrom(source)`
 
 Paste the specified clipboard to the current pane.
 
@@ -9,23 +9,19 @@ Possible values for source are:
 * `Clipboard` - paste from the system clipboard
 * `PrimarySelection` - paste from the primary selection buffer
 
-See also [Paste](Paste.md).
-
 ```lua
 local wezterm = require 'wezterm'
 local act = wezterm.action
 
-return {
-  keys = {
-    -- paste from the clipboard
-    { key = 'V', mods = 'CTRL', action = act.PasteFrom 'Clipboard' },
+config.keys = {
+  -- paste from the clipboard
+  { key = 'V', mods = 'CTRL', action = act.PasteFrom 'Clipboard' },
 
-    -- paste from the primary selection
-    { key = 'V', mods = 'CTRL', action = act.PasteFrom 'PrimarySelection' },
-  },
+  -- paste from the primary selection
+  { key = 'V', mods = 'CTRL', action = act.PasteFrom 'PrimarySelection' },
 }
 ```
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 `PrimarySelection` is now also supported on Wayland systems that support [primary-selection-unstable-v1](https://wayland.app/protocols/primary-selection-unstable-v1) or the older Gtk primary selection protocol.

@@ -1,36 +1,14 @@
-# Paste
+# `Paste`
 
 Paste the clipboard to the current pane.
 
-*since: 20210203-095643-70a364eb*
+{{since('20210203-095643-70a364eb')}}
 
 This action is considered to be deprecated and will be removed in
 a future release; please use [PasteFrom](PasteFrom.md) instead.
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
-This action has been removed. Please use [PasteFrom](PasteFrom.md) instead.
-
-## Example
-
-```lua
-local wezterm = require 'wezterm'
-
-return {
-  keys = {
-    { key = 'v', mods = 'SHIFT|CTRL', action = wezterm.action.Paste },
-  },
-
-  -- Middle mouse button pastes the clipboard.
-  -- Note that this is the default so you needn't copy this.
-  mouse_bindings = {
-    {
-      event = { Up = { streak = 1, button = 'Middle' } },
-      mods = 'NONE',
-      action = wezterm.action.Paste,
-    },
-  },
-}
-```
-
+!!! warning
+    This action has been removed. Please use [PasteFrom](PasteFrom.md) instead.
 

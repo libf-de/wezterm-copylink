@@ -52,6 +52,20 @@ impl GuiFrontEnd {
 
         mux.subscribe(move |n| {
             match n {
+                MuxNotification::WorkspaceRenamed {
+                    old_workspace,
+                    new_workspace,
+                } => {
+                    let mux = Mux::get();
+                    let active = mux.active_workspace();
+                    if active == old_workspace || active == new_workspace {
+                        let switcher = WorkspaceSwitcher::new(&new_workspace);
+                        promise::spawn::spawn_into_main_thread(async move {
+                            drop(switcher);
+                        })
+                        .detach();
+                    }
+                }
                 MuxNotification::WindowWorkspaceChanged(_)
                 | MuxNotification::ActiveWorkspaceChanged(_)
                 | MuxNotification::WindowCreated(_)
@@ -64,6 +78,18 @@ impl GuiFrontEnd {
                     })
                     .detach();
                 }
+                MuxNotification::PaneFocused(pane_id) => {
+                    promise::spawn::spawn_into_main_thread(async move {
+                        let mux = Mux::get();
+                        if let Err(err) = mux.focus_pane_and_containing_tab(pane_id) {
+                            log::error!("Error reconciling PaneFocused notification: {err:#}");
+                        }
+                    })
+                    .detach();
+                }
+                MuxNotification::TabTitleChanged { .. } => {}
+                MuxNotification::WindowTitleChanged { .. } => {}
+                MuxNotification::TabResized(_) => {}
                 MuxNotification::TabAddedToWindow { .. } => {}
                 MuxNotification::PaneRemoved(_) => {}
                 MuxNotification::WindowInvalidated(_) => {}

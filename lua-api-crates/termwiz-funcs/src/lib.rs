@@ -6,7 +6,6 @@ use std::str::FromStr;
 use termwiz::caps::{Capabilities, ColorLevel, ProbeHints};
 use termwiz::cell::{grapheme_column_width, unicode_column_width, AttributeChange, CellAttributes};
 use termwiz::color::{AnsiColor, ColorAttribute, ColorSpec, SrgbaTuple};
-use termwiz::input::Modifiers;
 use termwiz::render::terminfo::TerminfoRenderer;
 use termwiz::surface::change::Change;
 use termwiz::surface::Line;
@@ -81,9 +80,9 @@ impl FormatColor {
     }
 }
 
-impl Into<ColorSpec> for FormatColor {
-    fn into(self) -> ColorSpec {
-        match self {
+impl From<FormatColor> for ColorSpec {
+    fn from(val: FormatColor) -> Self {
+        match val {
             FormatColor::AnsiColor(c) => c.into(),
             FormatColor::Color(s) => {
                 let rgba = SrgbaTuple::from_str(&s).unwrap_or_else(|()| (0xff, 0xff, 0xff).into());
@@ -104,14 +103,14 @@ pub enum FormatItem {
 }
 impl_lua_conversion_dynamic!(FormatItem);
 
-impl Into<Change> for FormatItem {
-    fn into(self) -> Change {
-        match self {
-            Self::Attribute(change) => change.into(),
-            Self::Text(t) => t.into(),
-            Self::Foreground(c) => AttributeChange::Foreground(c.to_attr()).into(),
-            Self::Background(c) => AttributeChange::Background(c.to_attr()).into(),
-            Self::ResetAttributes => Change::AllAttributes(CellAttributes::default()),
+impl From<FormatItem> for Change {
+    fn from(val: FormatItem) -> Self {
+        match val {
+            FormatItem::Attribute(change) => change.into(),
+            FormatItem::Text(t) => t.into(),
+            FormatItem::Foreground(c) => AttributeChange::Foreground(c.to_attr()).into(),
+            FormatItem::Background(c) => AttributeChange::Background(c.to_attr()).into(),
+            FormatItem::ResetAttributes => Change::AllAttributes(CellAttributes::default()),
         }
     }
 }
@@ -145,7 +144,7 @@ pub fn format_as_escapes(items: Vec<FormatItem>) -> anyhow::Result<String> {
 }
 
 fn format<'lua>(_: &'lua Lua, items: Vec<FormatItem>) -> mlua::Result<String> {
-    format_as_escapes(items).map_err(|e| mlua::Error::external(e))
+    format_as_escapes(items).map_err(mlua::Error::external)
 }
 
 pub fn pad_right(mut result: String, width: usize) -> String {
@@ -204,6 +203,8 @@ fn permute_mods<'lua>(
     item: mlua::Table,
     allow_none: bool,
 ) -> mlua::Result<Vec<mlua::Value<'lua>>> {
+    use wezterm_input_types::Modifiers;
+
     let mut result = vec![];
     for ctrl in &[Modifiers::NONE, Modifiers::CTRL] {
         for shift in &[Modifiers::NONE, Modifiers::SHIFT] {
@@ -219,7 +220,7 @@ fn permute_mods<'lua>(
                         let (k, v) = pair?;
                         new_item.set(k, v)?;
                     }
-                    new_item.set("mods", format!("{:?}", flags))?;
+                    new_item.set("mods", flags.to_string())?;
                     result.push(new_item.to_lua(lua)?);
                 }
             }

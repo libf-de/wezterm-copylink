@@ -1,6 +1,10 @@
-# bypass_mouse_reporting_modifiers = "SHIFT"
+---
+tags:
+  - mouse
+---
+# `bypass_mouse_reporting_modifiers = "SHIFT"`
 
-*Since: 20210814-124438-54e29167*
+{{since('20210814-124438-54e29167')}}
 
 If an application has enabled mouse reporting mode, mouse events are sent
 directly to the application, and do not get routed through the mouse
@@ -16,8 +20,6 @@ as though `SHIFT` was not pressed and then match it against the mouse
 assignments.
 
 ```lua
-return {
-  -- Use ALT instead of SHIFT to bypass application mouse reporting
-  bypass_mouse_reporting_modifiers = 'ALT',
-}
+-- Use ALT instead of SHIFT to bypass application mouse reporting
+config.bypass_mouse_reporting_modifiers = 'ALT'
 ```

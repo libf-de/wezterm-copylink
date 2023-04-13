@@ -1,6 +1,6 @@
 # `pane:split{}`
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 Splits `pane` and spawns a program into the split, returning the
 `Pane` object associated with it:
@@ -68,8 +68,8 @@ Specifies where the new pane should be placed.  Possible values are:
 
 * `"Right"` - splits the pane left/right and places the new pane on the right.
 * `"Left"` - splits the pane left/right and places the new pane on the left.
-* `"Top"` - splits the pane top/bottom and places the new pane on the top.
-* `"Bottom"` - splits the pane top/bottom and places the new pane on the bottom.
+* `"Up"` - splits the pane top/bottom and places the new pane on the top.
+* `"Down"` - splits the pane top/bottom and places the new pane on the bottom.
 
 ```lua
 pane:split { direction = 'Top' }

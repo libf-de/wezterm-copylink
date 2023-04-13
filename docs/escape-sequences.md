@@ -41,7 +41,7 @@ applied to the terminal display using the following rules:
 * The cursor position will be updated based on the column width of the grapheme.
 
 After the graphemes are applied to the terminal display, the rendering portion of
-WezTerm will attempt to apply your [font shaping](config/font-shaping.html) configuration
+WezTerm will attempt to apply your [font shaping](config/font-shaping.md) configuration
 based on runs of graphemes with matching graphic attributes to determine which glyphs
 should be rendered from your fonts; it is at this stage that emoji and ligatures are
 resolved.
@@ -198,9 +198,9 @@ It is valid to omit the code number; for example `CSI m` is equivalent to `CSI
 |53  |OverlineOn|Renders text with a single overline/overbar|
 |55  |OverlineOff|Cancels OverlineOn|
 |59  |UnderlineColorDefault|Resets the underline color to default, which is to match the foreground color|
-|73  |VerticalAlignSuperScript|Adjusts the baseline of the text so that it renders as superscript (*Since: 20221119-145034-49b9839f*)|
-|74  |VerticalAlignSubScript|Adjusts the baseline of the text so that it renders as subscript (*Since: 20221119-145034-49b9839f*)|
-|75  |VerticalAlignBaseLine|Reset the baseline of the text to normal (*Since: 20221119-145034-49b9839f*)|
+|73  |VerticalAlignSuperScript|Adjusts the baseline of the text so that it renders as superscript {{since('20221119-145034-49b9839f', inline=True)}}|
+|74  |VerticalAlignSubScript|Adjusts the baseline of the text so that it renders as subscript {{since('20221119-145034-49b9839f', inline=True)}}|
+|75  |VerticalAlignBaseLine|Reset the baseline of the text to normal {{since('20221119-145034-49b9839f', inline=True)}}|
 |90  |ForegroundBrightBlack|Sets the foreground color to Bright Black, which is palette index 8|
 |91  |ForegroundBrightRed|Sets the foreground color to Bright Red, which is palette index 9|
 |92  |ForegroundBrightGreen|Sets the foreground color to Bright Green, which is palette index 10|
@@ -278,9 +278,9 @@ CSI 38 : 2 : R : G : B m
 
 ##### CSI 38:6 - foreground color: RGBA
 
-*Since: 20220807-113146-c2fee766*
+{{since('20220807-113146-c2fee766')}}
 
-This is a wezterm extension: wezterm considers colorspace ID `6` as RGBA,
+This is a wezterm extension: wezterm considers color mode `6` as RGBA,
 allowing you to specify the alpha channel in addition to the RGB channels.
 
 ```
@@ -306,9 +306,9 @@ CSI 48 : 2 : R : G : B m
 
 ##### CSI 48:6 - background color: RGBA
 
-*Since: 20220807-113146-c2fee766*
+{{since('20220807-113146-c2fee766')}}
 
-This is a wezterm extension: wezterm considers colorspace ID `6` as RGBA,
+This is a wezterm extension: wezterm considers color mode `6` as RGBA,
 allowing you to specify the alpha channel in addition to the RGB channels.
 
 ```
@@ -334,9 +334,9 @@ CSI 58 : 2 : R : G : B m
 
 ##### CSI 58:6 - underline color: RGBA
 
-*Since: 20220807-113146-c2fee766*
+{{since('20220807-113146-c2fee766')}}
 
-This is a wezterm extension: wezterm considers colorspace ID `6` as RGBA,
+This is a wezterm extension: wezterm considers color mode `6` as RGBA,
 allowing you to specify the alpha channel in addition to the RGB channels.
 
 ```
@@ -349,7 +349,7 @@ CSI 58 : 6 : : R : G : B : A m
 
 #### Mode Functions
 
-*Since: 20210814-124438-54e29167*
+{{since('20210814-124438-54e29167')}}
 
 WezTerm supports [Synchronized Rendering](https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036).
 DECSET 2026 is set to batch (hold) rendering until DECSET 2026 is reset to flush the queued screen data.
@@ -390,17 +390,17 @@ The table below is keyed by the OSC code.
 |4  |Change/Query Color Number | Set or query color palette entries 0-255. | query color number 1: `\x1b]4;1;?\x1b\\` <br/> Set color number 2: `\x1b]4;2;#cccccc\x1b\\` |
 |5  |Change/Query Special Color Number | Ignored | |
 |6  |iTerm2 Change Title Tab Color | Ignored | |
-|7  |Set Current Working Directory | [See Shell Integration](shell-integration.html#osc-7-escape-sequence-to-set-the-working-directory) ||
-|8  |Set Hyperlink | [See Explicit Hyperlinks](hyperlinks.html#explicit-hyperlinks) | |
+|7  |Set Current Working Directory | [See Shell Integration](shell-integration.md#osc-7-escape-sequence-to-set-the-working-directory) ||
+|8  |Set Hyperlink | [See Explicit Hyperlinks](hyperlinks.md#explicit-hyperlinks) | |
 |9  |iTerm2 Show System Notification | Show a "toast" notification | `printf "\e]9;%s\e\\" "hello there"` |
 |10 |Set Default Text Foreground Color| | `\x1b]10;#ff0000\x1b\\`.<br/> Also supports RGBA in nightly builds: `printf "\e]10;rgba(127,127,127,0.4)\x07"` |
 |11 |Set Default Text Background Color| | `\x1b]11;#0000ff\x1b\\`.<br/> Also supports RGBA in nightly builds: `printf "\e]11;rgba:efff/ecff/f4ff/d000\x07"` |
 |12 |Set Text Cursor Color| | `\x1b]12;#00ff00\x1b\\`.<br/> Also supports RGBA in nightly builds. |
 |52 |Manipulate clipboard | Requests to query the clipboard are ignored. Allows setting or clearing the clipboard | |
 |104|ResetColors | Reset color palette entries to their default values | |
-|133|FinalTerm semantic escapes| Informs the terminal about Input, Output and Prompt regions on the display | [See Shell Integration](shell-integration.html) |
+|133|FinalTerm semantic escapes| Informs the terminal about Input, Output and Prompt regions on the display | [See Shell Integration](shell-integration.md) |
 |777|Call rxvt extension| Only the notify extension is supported; it shows a "toast" notification | `printf "\e]777;notify;%s;%s\e\\" "title" "body"` |
-|1337 |iTerm2 File Upload Protocol | Allows displaying images inline | [See iTerm Image Protocol](imgcat.html) |
+|1337 |iTerm2 File Upload Protocol | Allows displaying images inline | [See iTerm Image Protocol](imgcat.md) |
 |L  |Set Icon Name (Sun) | Same as OSC 1 | `\x1b]Ltab-title\x1b\\` |
 |l  |Set Window Title (Sun) | Same as OSC 2 | `\x1b]lwindow-title\x1b\\` |
 

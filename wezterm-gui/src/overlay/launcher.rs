@@ -39,7 +39,7 @@ pub struct LauncherTabEntry {
     pub title: String,
     pub tab_id: TabId,
     pub tab_idx: usize,
-    pub pane_count: usize,
+    pub pane_count: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -91,14 +91,21 @@ impl LauncherArgs {
             window
                 .iter()
                 .enumerate()
-                .map(|(tab_idx, tab)| LauncherTabEntry {
-                    title: tab
-                        .get_active_pane()
-                        .expect("tab to have a pane")
-                        .get_title(),
-                    tab_id: tab.tab_id(),
-                    tab_idx,
-                    pane_count: tab.count_panes(),
+                .map(|(tab_idx, tab)| {
+                    let tab_title = tab.get_title();
+                    let title = if tab_title.is_empty() {
+                        tab.get_active_pane()
+                            .expect("tab to have a pane")
+                            .get_title()
+                    } else {
+                        tab_title
+                    };
+                    LauncherTabEntry {
+                        title,
+                        tab_id: tab.tab_id(),
+                        tab_idx,
+                        pane_count: tab.count_panes(),
+                    }
                 })
                 .collect()
         } else {
@@ -277,7 +284,10 @@ impl LauncherState {
 
         for tab in &args.tabs {
             self.entries.push(Entry {
-                label: format!("{}. {} panes", tab.title, tab.pane_count),
+                label: match tab.pane_count {
+                    Some(pane_count) => format!("{}. {pane_count} panes", tab.title),
+                    None => format!("{}.", tab.title),
+                },
                 action: KeyAssignment::ActivateTab(tab.tab_idx as isize),
             });
         }
@@ -424,6 +434,7 @@ impl LauncherState {
             self.window.notify(TermWindowNotif::PerformAssignment {
                 pane_id: self.pane_id,
                 assignment,
+                tx: None,
             });
             true
         } else {

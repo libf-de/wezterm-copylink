@@ -11,20 +11,20 @@ To install using the command line:
 
 First, [setup flatpak on your system](https://flatpak.org/setup/), then:
 
-```bash
-flatpak install flathub org.wezfurlong.wezterm
+```console
+$ flatpak install flathub org.wezfurlong.wezterm
 ```
 
 and then run:
 
-```bash
-flatpak run org.wezfurlong.wezterm
+```console
+$ flatpak run org.wezfurlong.wezterm
 ```
 
 You may wish to define an alias for convenience:
 
-```bash
-alias wezterm='flatpak run org.wezfurlong.wezterm'
+```console
+$ alias wezterm='flatpak run org.wezfurlong.wezterm'
 ```
 
 Note: flatpaks run in a sandbox so some functionality may behave a little
@@ -46,30 +46,30 @@ range of Linux distributions.
 
 Download and make the file executable and you're ready to run!
 
-<a href="{{ ubuntu18_AppImage_stable }}" class="btn">AppImage</a>
-<a href="{{ ubuntu18_AppImage_nightly }}" class="btn">Nightly AppImage</a>
+[AppImage :material-tray-arrow-down:]({{ ubuntu20_AppImage_stable }}){ .md-button }
+[Nightly AppImage :material-tray-arrow-down:]({{ ubuntu20_AppImage_nightly }}){ .md-button }
 
-```bash
-curl -LO {{ ubuntu18_AppImage_stable }}
-chmod +x {{ ubuntu18_AppImage_stable_asset }}
+```console
+$ curl -LO {{ ubuntu20_AppImage_stable }}
+$ chmod +x {{ ubuntu20_AppImage_stable_asset }}
 ```
 
 You may then execute the appimage directly to launch wezterm, with no
 specific installation steps required:
 
-```bash
-./{{ ubuntu18_AppImage_stable_asset }}
+```console
+$ ./{{ ubuntu20_AppImage_stable_asset }}
 ```
 
 That said, you may wish to make it a bit more convenient:
 
-```bash
-mkdir ~/bin
-mv ./{{ ubuntu18_AppImage_stable_asset }} ~/bin/wezterm
-~/bin/wezterm
+```console
+$ mkdir ~/bin
+$ mv ./{{ ubuntu20_AppImage_stable_asset }} ~/bin/wezterm
+$ ~/bin/wezterm
 ```
 
-* Configuration instructions can be [found here](../config/files.html)
+* Configuration instructions can be [found here](../config/files.md)
 
 ## Installing on Ubuntu and Debian-based Systems
 
@@ -81,7 +81,6 @@ you can try the AppImage download which should work on most Linux systems.
 
 |Distro      | Stable           | Nightly             |
 |------------|------------------|---------------------|
-|Ubuntu18    |[{{ ubuntu18_deb_stable_asset }}]({{ ubuntu18_deb_stable }}) |No longer supported|
 |Ubuntu20    |[{{ ubuntu20_deb_stable_asset }}]({{ ubuntu20_deb_stable }})  |[{{ ubuntu20_deb_nightly_asset }}]({{ ubuntu20_deb_nightly }})|
 |Ubuntu22    |[{{ ubuntu22_deb_stable_asset }}]({{ ubuntu22_deb_stable }}) |[{{ ubuntu22_deb_nightly_asset }}]({{ ubuntu22_deb_nightly }})|
 |Debian10    |[{{ debian10_deb_stable_asset }}]({{ debian10_deb_stable }}) |[{{ debian10_deb_nightly_asset }}]({{ debian10_deb_nightly }})|
@@ -90,13 +89,13 @@ you can try the AppImage download which should work on most Linux systems.
 To download and install from the CLI, you can use something like this, which
 shows how to install the Ubuntu 20 package:
 
-```bash
-curl -LO {{ ubuntu20_deb_stable }}
-sudo apt install -y ./{{ ubuntu20_deb_stable_asset }}
+```console
+$ curl -LO {{ ubuntu20_deb_stable }}
+$ sudo apt install -y ./{{ ubuntu20_deb_stable_asset }}
 ```
 
 * The package installs `/usr/bin/wezterm` and `/usr/share/applications/org.wezfurlong.wezterm.desktop`
-* Configuration instructions can be [found here](../config/files.html)
+* Configuration instructions can be [found here](../config/files.md)
 
 ## Installing on Fedora and rpm-based Systems
 
@@ -110,33 +109,31 @@ on most Linux systems.
 |CentOS7     |[{{ centos7_rpm_stable_asset }}]({{ centos7_rpm_stable }}) |[{{ centos7_rpm_nightly_asset }}]({{ centos7_rpm_nightly }})|
 |CentOS8     |[{{ centos8_rpm_stable_asset }}]({{ centos8_rpm_stable }}) |[{{ centos8_rpm_nightly_asset }}]({{ centos8_rpm_nightly }})|
 |CentOS9     |[{{ centos9_rpm_stable_asset }}]({{ centos9_rpm_stable }})|[{{ centos9_rpm_nightly_asset }}]({{ centos9_rpm_nightly }})|
-|Fedora33    |[{{ fedora33_rpm_stable_asset }}]({{ fedora33_rpm_stable }}) |No longer provided|
-|Fedora34    |[{{ fedora34_rpm_stable_asset }}]({{ fedora34_rpm_stable }}) |[{{ fedora34_rpm_nightly_asset }}]({{ fedora34_rpm_nightly }})|
 |Fedora35    |[{{ fedora35_rpm_stable_asset }}]({{ fedora35_rpm_stable }}) |[{{ fedora35_rpm_nightly_asset }}]({{ fedora35_rpm_nightly }})|
 |Fedora36    |[{{ fedora36_rpm_stable_asset }}]({{ fedora36_rpm_stable }})|[{{ fedora36_rpm_nightly_asset }}]({{ fedora36_rpm_nightly }})|
-|Fedora37    |Nightly builds only |[{{ fedora37_rpm_nightly_asset }}]({{ fedora37_rpm_nightly }})|
+|Fedora37    |[{{ fedora37_rpm_stable_asset }}]({{ fedora37_rpm_stable }})|[{{ fedora37_rpm_nightly_asset }}]({{ fedora37_rpm_nightly }})|
 |openSUSE Leap    |[{{ opensuse_leap_rpm_stable_asset }}]({{ opensuse_leap_rpm_stable }})|[{{ opensuse_leap_rpm_nightly_asset }}]({{ opensuse_leap_rpm_nightly }})|
 |openSUSE Tumbleweed    |[{{ opensuse_tumbleweed_rpm_stable_asset }}]({{ opensuse_tumbleweed_rpm_stable }})|[{{ opensuse_tumbleweed_rpm_nightly_asset }}]({{ opensuse_tumbleweed_rpm_nightly }})|
 
 To download and install from the CLI you can use something like this, which
 shows how to install the Fedora 35 package:
 
-```bash
-sudo dnf install -y {{ fedora35_rpm_stable }}
+```console
+$ sudo dnf install -y {{ fedora35_rpm_stable }}
 ```
 
 WezTerm is also available in the official Factory repo in openSUSE Tumbleweed. To install from Factory instead
 from the rpm provided by WezTerm's Github repository, you can use Yast. If you prefer the CLI, you can install
 it as root user with
 
-```bash
-zypper addrepo https://download.opensuse.org/repositories/openSUSE:Factory/standard/openSUSE:Factory.repo
-zypper refresh
-zypper install wezterm
+```console
+$ zypper addrepo https://download.opensuse.org/repositories/openSUSE:Factory/standard/openSUSE:Factory.repo
+$ zypper refresh
+$ zypper install wezterm
 ```
 
 * The package installs `/usr/bin/wezterm` and `/usr/share/applications/org.wezfurlong.wezterm.desktop`
-* Configuration instructions can be [found here](../config/files.html)
+* Configuration instructions can be [found here](../config/files.md)
 
 ## Arch Linux
 
@@ -155,9 +152,6 @@ APKs are built out from the `main` branch.
 
 |Version | Stable        | Nightly |
 |--------|---------------|---------|
-| 3.12   |[{{ alpine3_12_apk_stable_asset }}]({{ alpine3_12_apk_stable }})|[{{ alpine3_12_apk_nightly_asset }}]({{ alpine3_12_apk_nightly }})|
-| 3.13   |[{{ alpine3_13_apk_stable_asset }}]({{ alpine3_13_apk_stable }})|[{{ alpine3_13_apk_nightly_asset }}]({{ alpine3_13_apk_nightly }})|
-| 3.14   |[{{ alpine3_14_apk_stable_asset }}]({{ alpine3_14_apk_stable }})|[{{ alpine3_14_apk_nightly_asset }}]({{ alpine3_14_apk_nightly }})|
 | 3.15   |[{{ alpine3_15_apk_stable_asset }}]({{ alpine3_15_apk_stable }})|[{{ alpine3_15_apk_nightly_asset }}]({{ alpine3_15_apk_nightly }})|
 
 ## Linuxbrew Tap
@@ -165,21 +159,21 @@ APKs are built out from the `main` branch.
 If you are a [Linuxbrew](https://docs.brew.sh/Homebrew-on-Linux) user, you can install
 wezterm from our tap:
 
-```bash
+```console
 $ brew tap wez/wezterm-linuxbrew
 $ brew install wezterm
 ```
 
 If you'd like to use a nightly build you can perform a head install:
 
-```bash
+```console
 $ brew install --HEAD wezterm
 ```
 
 to upgrade to a newer nightly, it is simplest to remove then
 install:
 
-```bash
+```console
 $ brew rm wezterm
 $ brew install --HEAD wezterm
 ```
@@ -189,7 +183,7 @@ $ brew install --HEAD wezterm
 Another option for linux is a raw binary archive.  These are the same binaries that
 are built for Ubuntu but provided in a tarball.
 
-<a href="{{ linux_raw_bin_stable }}" class="btn">Download raw Linux binaries</a>
-<a href="{{ linux_raw_bin_nightly }}" class="btn">Nightly raw Linux binaries</a>
+[Raw Linux Binary :material-tray-arrow-down:]({{ linux_raw_bin_stable }}){ .md-button }
+[Nightly Raw Linux Binary :material-tray-arrow-down:]({{ linux_raw_bin_nightly }}){ .md-button }
 
 

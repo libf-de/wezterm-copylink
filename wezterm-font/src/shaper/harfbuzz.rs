@@ -405,7 +405,7 @@ impl HarfbuzzShaper {
                     map.entry(start).or_insert_with(|| Item { start, cell_idx });
                 }
 
-                let mut cluster_starts: Vec<Item> = map.into_iter().map(|(_, item)| item).collect();
+                let mut cluster_starts: Vec<Item> = map.into_values().collect();
                 cluster_starts.sort();
 
                 // If we have multiple entries with the same starting cell index,
@@ -466,8 +466,8 @@ impl HarfbuzzShaper {
         cluster_resolver.build(hb_infos, s, &range);
         log::debug!("cluster_resolver: {cluster_resolver:#?}");
 
-        let mut info_iter = hb_infos.iter().zip(positions.iter()).peekable();
-        while let Some((info, pos)) = info_iter.next() {
+        let info_iter = hb_infos.iter().zip(positions.iter()).peekable();
+        for (info, pos) in info_iter {
             let cluster_info = match cluster_resolver.get_mut(info.cluster as usize) {
                 Some(i) => i,
                 None => panic!(
@@ -701,7 +701,7 @@ impl FontShaper for HarfbuzzShaper {
             dpi,
         };
         if let Some(metrics) = self.metrics.borrow().get(&key) {
-            return Ok(metrics.clone());
+            return Ok(*metrics);
         }
 
         let scale = self.handles[font_idx].scale.unwrap_or(1.);
@@ -737,7 +737,7 @@ impl FontShaper for HarfbuzzShaper {
             metrics.force_y_adjust = diff;
         }
 
-        self.metrics.borrow_mut().insert(key, metrics.clone());
+        self.metrics.borrow_mut().insert(key, metrics);
 
         log::trace!(
             "metrics_for_idx={}, size={}, dpi={} -> {:?}",
@@ -884,7 +884,7 @@ mod test {
         num_cells: 1,
         cluster: 0,
         font_idx: 0,
-        glyph_pos: 180,
+        glyph_pos: 189,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -899,7 +899,7 @@ mod test {
         num_cells: 1,
         cluster: 1,
         font_idx: 0,
-        glyph_pos: 205,
+        glyph_pos: 214,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -914,7 +914,7 @@ mod test {
         num_cells: 1,
         cluster: 2,
         font_idx: 0,
-        glyph_pos: 206,
+        glyph_pos: 215,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -952,7 +952,7 @@ mod test {
         num_cells: 1,
         cluster: 0,
         font_idx: 0,
-        glyph_pos: 726,
+        glyph_pos: 1052,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -992,7 +992,7 @@ mod test {
         num_cells: 1,
         cluster: 0,
         font_idx: 0,
-        glyph_pos: 1212,
+        glyph_pos: 1742,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1007,7 +1007,7 @@ mod test {
         num_cells: 1,
         cluster: 1,
         font_idx: 0,
-        glyph_pos: 1065,
+        glyph_pos: 1588,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1045,7 +1045,7 @@ mod test {
         num_cells: 1,
         cluster: 0,
         font_idx: 0,
-        glyph_pos: 726,
+        glyph_pos: 1742,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1060,7 +1060,7 @@ mod test {
         num_cells: 1,
         cluster: 1,
         font_idx: 0,
-        glyph_pos: 1212,
+        glyph_pos: 1742,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1075,7 +1075,7 @@ mod test {
         num_cells: 1,
         cluster: 2,
         font_idx: 0,
-        glyph_pos: 623,
+        glyph_pos: 1589,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1114,7 +1114,7 @@ mod test {
         num_cells: 1,
         cluster: 0,
         font_idx: 0,
-        glyph_pos: 350,
+        glyph_pos: 367,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1129,7 +1129,7 @@ mod test {
         num_cells: 1,
         cluster: 1,
         font_idx: 0,
-        glyph_pos: 686,
+        glyph_pos: 958,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1144,7 +1144,7 @@ mod test {
         num_cells: 1,
         cluster: 2,
         font_idx: 0,
-        glyph_pos: 350,
+        glyph_pos: 367,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1183,7 +1183,7 @@ mod test {
         num_cells: 1,
         cluster: 0,
         font_idx: 0,
-        glyph_pos: 350,
+        glyph_pos: 367,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1198,7 +1198,7 @@ mod test {
         num_cells: 2,
         cluster: 1,
         font_idx: 0,
-        glyph_pos: 686,
+        glyph_pos: 958,
         x_advance: 10.0,
         y_advance: 0.0,
         x_offset: 0.0,
@@ -1213,7 +1213,7 @@ mod test {
         num_cells: 1,
         cluster: 4,
         font_idx: 0,
-        glyph_pos: 350,
+        glyph_pos: 367,
         x_advance: 6.0,
         y_advance: 0.0,
         x_offset: 0.0,

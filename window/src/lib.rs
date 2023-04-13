@@ -256,6 +256,9 @@ pub trait WindowOps {
     /// Resize the inner or client area of the window
     fn set_inner_size(&self, width: usize, height: usize);
 
+    /// Use for windows snap layouts
+    fn set_maximize_button_position(&self, _coords: ScreenPoint) {}
+
     /// Requests the windowing system to start a window drag.
     ///
     /// This is only implemented on backends that handle

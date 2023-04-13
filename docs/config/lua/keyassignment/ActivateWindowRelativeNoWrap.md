@@ -1,6 +1,6 @@
-# ActivateWindowRelative(delta)
+# `ActivateWindowRelative(delta)`
 
-*since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 Activates a GUI window relative to the current window.
 
@@ -15,21 +15,21 @@ windows:
 ```lua
 local wezterm = require 'wezterm'
 local act = wezterm.action
+local config = {}
 
-return {
-  keys = {
-    {
-      key = 'r',
-      mods = 'ALT',
-      action = act.ActivateWindowRelativeNoWrap(1),
-    },
-    {
-      key = 'e',
-      mods = 'ALT',
-      action = act.ActivateWindowRelativeNoWrap(-1),
-    },
+config.keys = {
+  {
+    key = 'r',
+    mods = 'ALT',
+    action = act.ActivateWindowRelativeNoWrap(1),
+  },
+  {
+    key = 'e',
+    mods = 'ALT',
+    action = act.ActivateWindowRelativeNoWrap(-1),
   },
 }
+return config
 ```
 
 See also [ActivateWindowRelative](ActivateWindowRelative.md),

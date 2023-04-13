@@ -13,7 +13,7 @@ use mux::window::WindowId;
 use mux::{Mux, MuxNotification};
 use portable_pty::CommandBuilder;
 use promise::spawn::spawn_into_new_thread;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use wezterm_term::TerminalSize;
 
@@ -98,6 +98,16 @@ impl ClientInner {
             remote_window_id,
             local_window_id
         );
+    }
+
+    fn local_to_remote_tab(&self, local_tab_id: TabId) -> Option<TabId> {
+        let map = self.remote_to_local_tab.lock().unwrap();
+        for (remote, local) in map.iter() {
+            if *local == local_tab_id {
+                return Some(*remote);
+            }
+        }
+        None
     }
 
     fn local_to_remote_window(&self, local_window_id: WindowId) -> Option<WindowId> {
@@ -269,12 +279,34 @@ fn mux_notify_client_domain(local_domain_id: DomainId, notif: MuxNotification) -
         Some(domain) => domain,
         None => return false,
     };
-    if domain.downcast_ref::<ClientDomain>().is_none() {
-        return false;
-    }
+    let client_domain = match domain.downcast_ref::<ClientDomain>() {
+        Some(c) => c,
+        None => return false,
+    };
+
     match notif {
         MuxNotification::ActiveWorkspaceChanged(_client_id) => {
             // TODO: advice remote host of interesting workspaces
+        }
+        MuxNotification::WorkspaceRenamed {
+            old_workspace,
+            new_workspace,
+        } => {
+            if let Some(inner) = client_domain.inner() {
+                let workspaces = Mux::get().iter_workspaces();
+                if workspaces.contains(&old_workspace) {
+                    promise::spawn::spawn(async move {
+                        inner
+                            .client
+                            .rename_workspace(codec::RenameWorkspace {
+                                old_workspace,
+                                new_workspace,
+                            })
+                            .await
+                    })
+                    .detach();
+                }
+            }
         }
         MuxNotification::WindowWorkspaceChanged(window_id) => {
             // Mux::get_window() may trigger a borrow error if called
@@ -305,13 +337,65 @@ fn mux_notify_client_domain(local_domain_id: DomainId, notif: MuxNotification) -
                         .detach();
                     }
                 } else {
-                    log::warn!(
+                    log::debug!(
                         "local window id {window_id} has no known remote window \
                         id while reconciling a local WindowWorkspaceChanged event"
                     );
                 }
             })
             .detach();
+        }
+        MuxNotification::TabTitleChanged { tab_id, title } => {
+            if let Some(remote_tab_id) = client_domain.local_to_remote_tab_id(tab_id) {
+                if let Some(inner) = client_domain.inner() {
+                    promise::spawn::spawn(async move {
+                        inner
+                            .client
+                            .set_tab_title(codec::TabTitleChanged {
+                                tab_id: remote_tab_id,
+                                title,
+                            })
+                            .await
+                    })
+                    .detach();
+                }
+            }
+        }
+        MuxNotification::WindowTitleChanged {
+            window_id,
+            title: _,
+        } => {
+            if let Some(remote_window_id) = client_domain.local_to_remote_window_id(window_id) {
+                if let Some(inner) = client_domain.inner() {
+                    promise::spawn::spawn_into_main_thread(async move {
+                        // De-bounce the title propagation.
+                        // There is a bit of a race condition with these async
+                        // updates that can trigger a cycle of WindowTitleChanged
+                        // PDUs being exchanged between client and server if the
+                        // title is changed twice in quick succession.
+                        // To avoid that, here on the client, we wait a second
+                        // and then report the now-current name of the window, rather
+                        // than propagating the title encoded in the MuxNotification.
+                        smol::Timer::after(std::time::Duration::from_secs(1)).await;
+                        if let Some(mux) = Mux::try_get() {
+                            let title = mux
+                                .get_window(window_id)
+                                .map(|win| win.get_title().to_string());
+                            if let Some(title) = title {
+                                inner
+                                    .client
+                                    .set_window_title(codec::WindowTitleChanged {
+                                        window_id: remote_window_id,
+                                        title,
+                                    })
+                                    .await?;
+                            }
+                        }
+                        anyhow::Result::<()>::Ok(())
+                    })
+                    .detach();
+                }
+            }
         }
         _ => {}
     }
@@ -332,7 +416,7 @@ impl ClientDomain {
     }
 
     fn inner(&self) -> Option<Arc<ClientInner>> {
-        self.inner.lock().unwrap().as_ref().map(|i| Arc::clone(i))
+        self.inner.lock().unwrap().as_ref().map(Arc::clone)
     }
 
     pub fn connect_automatically(&self) -> bool {
@@ -359,6 +443,11 @@ impl ClientDomain {
     pub fn local_to_remote_window_id(&self, local_window_id: WindowId) -> Option<WindowId> {
         let inner = self.inner()?;
         inner.local_to_remote_window(local_window_id)
+    }
+
+    pub fn local_to_remote_tab_id(&self, local_tab_id: TabId) -> Option<TabId> {
+        let inner = self.inner()?;
+        inner.local_to_remote_tab(local_tab_id)
     }
 
     pub fn get_client_inner_for_domain(domain_id: DomainId) -> anyhow::Result<Arc<ClientInner>> {
@@ -392,11 +481,31 @@ impl ClientDomain {
     }
 
     pub async fn resync(&self) -> anyhow::Result<()> {
-        if let Some(inner) = self.inner.lock().unwrap().as_ref() {
+        if let Some(inner) = self.inner() {
             let panes = inner.client.list_panes().await?;
-            Self::process_pane_list(Arc::clone(inner), panes, None)?;
+            Self::process_pane_list(inner, panes, None)?;
         }
         Ok(())
+    }
+
+    pub fn process_remote_window_title_change(&self, remote_window_id: WindowId, title: String) {
+        if let Some(inner) = self.inner() {
+            if let Some(local_window_id) = inner.remote_to_local_window(remote_window_id) {
+                if let Some(mut window) = Mux::get().get_window_mut(local_window_id) {
+                    window.set_title(&title);
+                }
+            }
+        }
+    }
+
+    pub fn process_remote_tab_title_change(&self, remote_tab_id: TabId, title: String) {
+        if let Some(inner) = self.inner() {
+            if let Some(local_tab_id) = inner.remote_to_local_tab_id(remote_tab_id) {
+                if let Some(tab) = Mux::get().get_tab(local_tab_id) {
+                    tab.set_title(&title);
+                }
+            }
+        }
     }
 
     fn process_pane_list(
@@ -411,7 +520,31 @@ impl ClientDomain {
             panes
         );
 
-        for tabroot in panes.tabs {
+        // "Mark" the current set of known remote ids, so that we can "Sweep"
+        // any unreferenced ids at the bottom, garbage collection style
+        let mut remote_windows_to_forget: HashSet<WindowId> = inner
+            .remote_to_local_window
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .collect();
+        let mut remote_tabs_to_forget: HashSet<WindowId> = inner
+            .remote_to_local_tab
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .collect();
+        let mut remote_panes_to_forget: HashSet<WindowId> = inner
+            .remote_to_local_pane
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .collect();
+
+        for (tabroot, tab_title) in panes.tabs.into_iter().zip(panes.tab_titles.iter()) {
             let root_size = match tabroot.root_size() {
                 Some(size) => size,
                 None => continue,
@@ -419,6 +552,9 @@ impl ClientDomain {
 
             if let Some((remote_window_id, remote_tab_id)) = tabroot.window_and_tab_ids() {
                 let tab;
+
+                remote_windows_to_forget.remove(&remote_window_id);
+                remote_tabs_to_forget.remove(&remote_tab_id);
 
                 if let Some(tab_id) = inner.remote_to_local_tab_id(remote_tab_id) {
                     match mux.get_tab(tab_id) {
@@ -444,10 +580,13 @@ impl ClientDomain {
                     inner.record_remote_to_local_tab_mapping(remote_tab_id, tab.tab_id());
                 }
 
+                tab.set_title(tab_title);
+
                 log::debug!("domain: {} tree: {:#?}", inner.local_domain_id, tabroot);
                 let mut workspace = None;
                 tab.sync_with_pane_tree(root_size, tabroot, |entry| {
                     workspace.replace(entry.workspace.clone());
+                    remote_panes_to_forget.remove(&entry.pane_id);
                     if let Some(pane_id) = inner.remote_to_local_pane_id(entry.pane_id) {
                         match mux.get_pane(pane_id) {
                             Some(pane) => pane,
@@ -537,6 +676,41 @@ impl ClientDomain {
             }
         }
 
+        for (remote_window_id, window_title) in panes.window_titles {
+            if let Some(local_window_id) = inner.remote_to_local_window(remote_window_id) {
+                let mut window = mux
+                    .get_window_mut(local_window_id)
+                    .expect("no such window!?");
+                window.set_title(&window_title);
+            }
+        }
+
+        // "Sweep" away our mapping for ids that are no longer present in the
+        // latest sync
+        log::debug!(
+            "after sync, remote_windows_to_forget={remote_windows_to_forget:?}, \
+                    remote_tabs_to_forget={remote_tabs_to_forget:?}, \
+                    remote_panes_to_forget={remote_panes_to_forget:?}"
+        );
+        if !remote_windows_to_forget.is_empty() {
+            let mut windows = inner.remote_to_local_window.lock().unwrap();
+            for w in remote_windows_to_forget {
+                windows.remove(&w);
+            }
+        }
+        if !remote_tabs_to_forget.is_empty() {
+            let mut tabs = inner.remote_to_local_tab.lock().unwrap();
+            for t in remote_tabs_to_forget {
+                tabs.remove(&t);
+            }
+        }
+        if !remote_panes_to_forget.is_empty() {
+            let mut panes = inner.remote_to_local_pane.lock().unwrap();
+            for p in remote_panes_to_forget {
+                panes.remove(&p);
+            }
+        }
+
         Ok(())
     }
 
@@ -591,6 +765,60 @@ impl Domain for ClientDomain {
         _command_dir: Option<String>,
     ) -> anyhow::Result<Arc<dyn Pane>> {
         anyhow::bail!("spawn_pane not implemented for ClientDomain")
+    }
+
+    /// Forward the request to the remote; we need to translate the local ids
+    /// to those that match the remote for the request, resync the changed
+    /// structure, and then translate the results back to local
+    async fn move_pane_to_new_tab(
+        &self,
+        pane_id: PaneId,
+        window_id: Option<WindowId>,
+        workspace_for_new_window: Option<String>,
+    ) -> anyhow::Result<Option<(Arc<Tab>, WindowId)>> {
+        let inner = self
+            .inner()
+            .ok_or_else(|| anyhow!("domain is not attached"))?;
+
+        let local_pane = Mux::get()
+            .get_pane(pane_id)
+            .ok_or_else(|| anyhow!("pane_id {} is invalid", pane_id))?;
+        let pane = local_pane
+            .downcast_ref::<ClientPane>()
+            .ok_or_else(|| anyhow!("pane_id {} is not a ClientPane", pane_id))?;
+
+        let remote_window_id =
+            window_id.and_then(|local_window| self.local_to_remote_window_id(local_window));
+
+        let result = inner
+            .client
+            .move_pane_to_new_tab(codec::MovePaneToNewTab {
+                pane_id: pane.remote_pane_id,
+                window_id: remote_window_id,
+                workspace_for_new_window,
+            })
+            .await?;
+
+        self.resync().await?;
+
+        let local_tab_id = inner
+            .remote_to_local_tab_id(result.tab_id)
+            .ok_or_else(|| anyhow!("remote tab {} didn't resolve after resync", result.tab_id))?;
+
+        let local_win_id = self
+            .remote_to_local_window_id(result.window_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "remote window {} didn't resolve after resync",
+                    result.window_id
+                )
+            })?;
+
+        let tab = Mux::get()
+            .get_tab(local_tab_id)
+            .ok_or_else(|| anyhow!("local tab {local_tab_id} is invalid"))?;
+
+        Ok(Some((tab, local_win_id)))
     }
 
     async fn spawn(
@@ -768,22 +996,8 @@ impl Domain for ClientDomain {
         Ok(())
     }
 
-    fn local_window_is_closing(&self, window_id: WindowId) {
-        let mux = Mux::get();
-        let window = match mux.get_window(window_id) {
-            Some(w) => w,
-            None => return,
-        };
-
-        for tab in window.iter() {
-            for pos in tab.iter_panes_ignoring_zoom() {
-                if pos.pane.domain_id() == self.local_domain_id {
-                    if let Some(client_pane) = pos.pane.downcast_ref::<ClientPane>() {
-                        client_pane.ignore_next_kill();
-                    }
-                }
-            }
-        }
+    fn detachable(&self) -> bool {
+        true
     }
 
     fn detach(&self) -> anyhow::Result<()> {

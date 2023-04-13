@@ -40,7 +40,7 @@ pub enum InternalError {
     Io(#[from] std::io::Error),
 
     #[error(transparent)]
-    Regex(#[from] regex::Error),
+    Regex(#[from] fancy_regex::Error),
 
     #[error(transparent)]
     FromUtf8(#[from] std::string::FromUtf8Error),
@@ -71,6 +71,13 @@ pub enum InternalError {
 
     #[error(transparent)]
     FileDescriptor(#[from] filedescriptor::Error),
+
+    #[error(transparent)]
+    BlobLease(#[from] wezterm_blob_leases::Error),
+
+    #[cfg(feature = "use_image")]
+    #[error(transparent)]
+    ImageError(#[from] image::ImageError),
 
     #[error("{}", .context)]
     Context {

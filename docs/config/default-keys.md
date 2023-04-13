@@ -1,4 +1,10 @@
-## Default Shortcut / Key Binding Assignments
+---
+search:
+  boost: 20
+keywords: default keys key
+tags:
+ - keys
+---
 
 The default key assignments are shown in the table below.
 
@@ -13,7 +19,7 @@ in a form that you can copy and paste into your own configuration.
 | `CTRL+SHIFT`     | `v`   | `PasteFrom="Clipboard"`  |
 |      | `Copy`   | `CopyTo="Clipboard"`  |
 |      | `Paste`   | `PasteFrom="Clipboard"`  |
-| `CTRL`     | `Insert` | `CopyTo="PrimarySelection"` (*since: 20210203-095643-70a364eb*) |
+| `CTRL`     | `Insert` | `CopyTo="PrimarySelection"` {{since('20210203-095643-70a364eb', inline=True)}} |
 | `SHIFT`     | `Insert` | `PasteFrom="PrimarySelection"` |
 | `SUPER`     | `m`      | `Hide`  |
 | `SUPER`     | `n`      | `SpawnWindow` |
@@ -63,13 +69,13 @@ in a form that you can copy and paste into your own configuration.
 | `SUPER`          | `h`    | `HideApplication` (macOS only) |
 | `SUPER`          | `k`    | `ClearScrollback="ScrollbackOnly"` |
 | `CTRL+SHIFT`     | `K`    | `ClearScrollback="ScrollbackOnly"` |
-| `CTRL+SHIFT`     | `L`    | `ShowDebugOverlay` (*Since: 20210814-124438-54e29167*)|
-| `CTRL+SHIFT`     | `P`    | `PaneSelect` (*Since: 20220903-194523-3bb1ed61*)|
-| `CTRL+SHIFT`     | `U`    | `CharSelect` (*Since: 20220903-194523-3bb1ed61*)|
+| `CTRL+SHIFT`     | `L`    | `ShowDebugOverlay` {{since('20210814-124438-54e29167', inline=True)}}|
+| `CTRL+SHIFT`     | `P`    | `PaneSelect` {{since('20220903-194523-3bb1ed61', inline=True)}}|
+| `CTRL+SHIFT`     | `U`    | `CharSelect` {{since('20220903-194523-3bb1ed61', inline=True)}}|
 | `SUPER`          | `f`    | `Search={CaseSensitiveString=""}` |
 | `CTRL+SHIFT`     | `F`    | `Search={CaseSensitiveString=""}` |
 | `CTRL+SHIFT`     | `X`    | `ActivateCopyMode` |
-| `CTRL+SHIFT`     | `Space`| `QuickSelect` (*since: 20210502-130208-bff6815d*) |
+| `CTRL+SHIFT`     | `Space`| `QuickSelect` {{since('20210502-130208-bff6815d', inline=True)}} |
 | `CTRL+SHIFT+ALT` | `"`    | `SplitVertical={domain="CurrentPaneDomain"}` |
 | `CTRL+SHIFT+ALT` | `%`    | `SplitHorizontal={domain="CurrentPaneDomain"}` |
 | `CTRL+SHIFT+ALT` | `LeftArrow`    | `AdjustPaneSize={"Left", 1}` |
@@ -87,8 +93,14 @@ disable all of them with this configuration; if you chose to do this,
 you must explicitly register every binding.
 
 ```lua
-return {
-  disable_default_key_bindings = true,
-}
+config.disable_default_key_bindings = true
 ```
+
+!!! tip
+    When using `disable_default_key_bindings`, it is recommended that you
+    assign [ShowDebugOverlay](lua/keyassignment/ShowDebugOverlay.md) to
+    something to aid in potential future troubleshooting.
+
+    Likewise, you may wish to assign
+    [ActivateCommandPalette](lua/keyassignment/ActivateCommandPalette.md).
 

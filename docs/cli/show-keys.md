@@ -1,6 +1,6 @@
 # `wezterm show-keys`
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 
 Prints the complete set of key assignments based on your config file.
@@ -41,4 +41,10 @@ Mouse
         SHIFT          Down { streak: 1, button: Left }     ->   ExtendSelectionToMouseCursor(None)
         ALT            Down { streak: 1, button: Left }     ->   SelectTextAtMouseCursor(Block)
         ...
+```
+
+## Synopsis
+
+```console
+{% include "../examples/cmd-synopsis-wezterm-show-keys--help.txt" %}
 ```

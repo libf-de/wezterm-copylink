@@ -37,7 +37,7 @@ The following options affect the behavior:
 * `--pane-id` - Specifies the pane that should be split. See also [Targeting Panes](index.md#targeting-panes).
 
 
-*Since 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 * `--bottom` - Split vertically, with the new pane on the bottom.
 * `--cells CELLS` - The number of cells that the new split should have. If omitted, 50% of the available space is used.
@@ -48,3 +48,8 @@ The following options affect the behavior:
 * `--top` - Split vertically, with the new pane on the top.
 * `--top-level` - Rather than splitting the active pane, split the entire window.
 
+## Synopsis
+
+```console
+{% include "../../examples/cmd-synopsis-wezterm-cli-split-pane--help.txt" %}
+```

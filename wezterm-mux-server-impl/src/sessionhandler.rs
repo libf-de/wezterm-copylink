@@ -1,12 +1,13 @@
 use crate::PKI;
 use anyhow::{anyhow, Context};
 use codec::*;
+use config::TermConfig;
 use mux::client::ClientId;
 use mux::domain::SplitSource;
 use mux::pane::{Pane, PaneId};
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use mux::tab::TabId;
-use mux::Mux;
+use mux::{Mux, MuxNotification};
 use promise::spawn::spawn_into_main_thread;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -99,11 +100,15 @@ impl PerPane {
         let mut bonus_lines = lines
             .into_iter()
             .enumerate()
-            .map(|(idx, mut line)| {
+            .filter_map(|(idx, mut line)| {
                 let stable_row = first_line + idx as StableRowIndex;
-                all_dirty_lines.remove(stable_row);
-                line.compress_for_scrollback();
-                (stable_row, line)
+                if all_dirty_lines.contains(stable_row) {
+                    all_dirty_lines.remove(stable_row);
+                    line.compress_for_scrollback();
+                    Some((stable_row, line))
+                } else {
+                    None
+                }
             })
             .collect::<Vec<_>>();
 
@@ -242,14 +247,16 @@ impl SessionHandler {
         let serial = decoded.serial;
 
         if let Some(client_id) = &self.client_id {
-            Mux::get().client_had_input(client_id);
+            if decoded.pdu.is_user_input() {
+                Mux::get().client_had_input(client_id);
+            }
         }
 
         let send_response = move |result: anyhow::Result<Pdu>| {
             let pdu = match result {
                 Ok(pdu) => pdu,
                 Err(err) => Pdu::ErrorResponse(ErrorResponse {
-                    reason: format!("Error: {}", err),
+                    reason: format!("Error: {err:#}"),
                 }),
             };
             log::trace!("{} processing time {:?}", serial, start.elapsed());
@@ -298,12 +305,44 @@ impl SessionHandler {
             Pdu::SetFocusedPane(SetFocusedPane { pane_id }) => {
                 let client_id = self.client_id.clone();
                 spawn_into_main_thread(async move {
-                    let mux = Mux::get();
-                    let _identity = mux.with_identity(client_id);
-                    mux.record_focus_for_current_identity(pane_id);
+                    catch(
+                        move || {
+                            let mux = Mux::get();
+                            let _identity = mux.with_identity(client_id);
+
+                            let pane = mux
+                                .get_pane(pane_id)
+                                .ok_or_else(|| anyhow::anyhow!("pane {pane_id} not found"))?;
+
+                            let (_domain_id, window_id, tab_id) = mux
+                                .resolve_pane_id(pane_id)
+                                .ok_or_else(|| anyhow::anyhow!("pane {pane_id} not found"))?;
+                            {
+                                let mut window =
+                                    mux.get_window_mut(window_id).ok_or_else(|| {
+                                        anyhow::anyhow!("window {window_id} not found")
+                                    })?;
+                                let tab_idx = window.idx_by_id(tab_id).ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "tab {tab_id} isn't really in window {window_id}!?"
+                                    )
+                                })?;
+                                window.save_and_then_set_active(tab_idx);
+                            }
+                            let tab = mux
+                                .get_tab(tab_id)
+                                .ok_or_else(|| anyhow::anyhow!("tab {tab_id} not found"))?;
+                            tab.set_active_pane(&pane);
+
+                            mux.record_focus_for_current_identity(pane_id);
+                            mux.notify(mux::MuxNotification::PaneFocused(pane_id));
+
+                            Ok(Pdu::UnitResponse(UnitResponse {}))
+                        },
+                        send_response,
+                    )
                 })
                 .detach();
-                send_response(Ok(Pdu::UnitResponse(UnitResponse {})))
             }
             Pdu::GetClientList(GetClientList) => {
                 spawn_into_main_thread(async move {
@@ -326,17 +365,42 @@ impl SessionHandler {
                         move || {
                             let mux = Mux::get();
                             let mut tabs = vec![];
+                            let mut tab_titles = vec![];
+                            let mut window_titles = HashMap::new();
                             for window_id in mux.iter_windows().into_iter() {
                                 let window = mux.get_window(window_id).unwrap();
+                                window_titles.insert(window_id, window.get_title().to_string());
                                 for tab in window.iter() {
                                     tabs.push(tab.codec_pane_tree());
+                                    tab_titles.push(tab.get_title());
                                 }
                             }
-                            log::trace!("ListPanes {:#?}", tabs);
-                            Ok(Pdu::ListPanesResponse(ListPanesResponse { tabs }))
+                            log::trace!("ListPanes {tabs:#?} {tab_titles:?}");
+                            Ok(Pdu::ListPanesResponse(ListPanesResponse {
+                                tabs,
+                                tab_titles,
+                                window_titles,
+                            }))
                         },
                         send_response,
                     )
+                })
+                .detach();
+            }
+
+            Pdu::RenameWorkspace(RenameWorkspace {
+                old_workspace,
+                new_workspace,
+            }) => {
+                spawn_into_main_thread(async move {
+                    catch(
+                        move || {
+                            let mux = Mux::get();
+                            mux.rename_workspace(&old_workspace, &new_workspace);
+                            Ok(Pdu::UnitResponse(UnitResponse {}))
+                        },
+                        send_response,
+                    );
                 })
                 .detach();
             }
@@ -353,6 +417,25 @@ impl SessionHandler {
                                 .ok_or_else(|| anyhow!("no such pane {}", pane_id))?;
                             pane.writer().write_all(&data)?;
                             maybe_push_pane_changes(&pane, sender, per_pane)?;
+                            Ok(Pdu::UnitResponse(UnitResponse {}))
+                        },
+                        send_response,
+                    );
+                })
+                .detach();
+            }
+            Pdu::EraseScrollbackRequest(EraseScrollbackRequest {
+                pane_id,
+                erase_mode,
+            }) => {
+                spawn_into_main_thread(async move {
+                    catch(
+                        move || {
+                            let mux = Mux::get();
+                            let pane = mux
+                                .get_pane(pane_id)
+                                .ok_or_else(|| anyhow!("no such pane {}", pane_id))?;
+                            pane.erase_scrollback(erase_mode);
                             Ok(Pdu::UnitResponse(UnitResponse {}))
                         },
                         send_response,
@@ -452,6 +535,32 @@ impl SessionHandler {
                             tab.set_active_pane(&pane);
                             tab.set_zoomed(zoomed);
                             Ok(Pdu::UnitResponse(UnitResponse {}))
+                        },
+                        send_response,
+                    )
+                })
+                .detach();
+            }
+
+            Pdu::GetPaneDirection(GetPaneDirection { pane_id, direction }) => {
+                spawn_into_main_thread(async move {
+                    catch(
+                        move || {
+                            let mux = Mux::get();
+                            let (_domain_id, _window_id, tab_id) = mux
+                                .resolve_pane_id(pane_id)
+                                .ok_or_else(|| anyhow!("no such pane {}", pane_id))?;
+                            let tab = mux
+                                .get_tab(tab_id)
+                                .ok_or_else(|| anyhow!("no such tab {}", tab_id))?;
+                            let panes = tab.iter_panes_ignoring_zoom();
+                            let pane_id = tab
+                                .get_pane_direction(direction, true)
+                                .map(|pane_index| panes[pane_index].pane.pane_id());
+
+                            Ok(Pdu::GetPaneDirectionResponse(GetPaneDirectionResponse {
+                                pane_id,
+                            }))
                         },
                         send_response,
                     )
@@ -728,17 +837,92 @@ impl SessionHandler {
                     send_response,
                 );
             }
+            Pdu::WindowTitleChanged(WindowTitleChanged { window_id, title }) => {
+                spawn_into_main_thread(async move {
+                    catch(
+                        move || {
+                            let mux = Mux::get();
+                            let mut window = mux
+                                .get_window_mut(window_id)
+                                .ok_or_else(|| anyhow!("no such window {window_id}"))?;
+
+                            window.set_title(&title);
+
+                            Ok(Pdu::UnitResponse(UnitResponse {}))
+                        },
+                        send_response,
+                    )
+                })
+                .detach();
+            }
+            Pdu::TabTitleChanged(TabTitleChanged { tab_id, title }) => {
+                spawn_into_main_thread(async move {
+                    catch(
+                        move || {
+                            let mux = Mux::get();
+                            let tab = mux
+                                .get_tab(tab_id)
+                                .ok_or_else(|| anyhow!("no such tab {tab_id}"))?;
+
+                            tab.set_title(&title);
+
+                            Ok(Pdu::UnitResponse(UnitResponse {}))
+                        },
+                        send_response,
+                    )
+                })
+                .detach();
+            }
+            Pdu::SetPalette(SetPalette { pane_id, palette }) => {
+                spawn_into_main_thread(async move {
+                    catch(
+                        move || {
+                            let mux = Mux::get();
+                            let pane = mux
+                                .get_pane(pane_id)
+                                .ok_or_else(|| anyhow!("no such pane {}", pane_id))?;
+
+                            match pane.get_config() {
+                                Some(config) => match config.downcast_ref::<TermConfig>() {
+                                    Some(tc) => tc.set_client_palette(palette),
+                                    None => {
+                                        log::error!(
+                                            "pane {pane_id} doesn't \
+                                            have TermConfig as its config! \
+                                            Ignoring client palette update"
+                                        );
+                                    }
+                                },
+                                None => {
+                                    let config = TermConfig::new();
+                                    config.set_client_palette(palette);
+                                    pane.set_config(Arc::new(config));
+                                }
+                            }
+
+                            mux.notify(MuxNotification::Alert {
+                                pane_id,
+                                alert: Alert::PaletteChanged,
+                            });
+
+                            Ok(Pdu::UnitResponse(UnitResponse {}))
+                        },
+                        send_response,
+                    )
+                })
+                .detach();
+            }
 
             Pdu::Invalid { .. } => send_response(Err(anyhow!("invalid PDU {:?}", decoded.pdu))),
             Pdu::Pong { .. }
             | Pdu::ListPanesResponse { .. }
             | Pdu::SetClipboard { .. }
             | Pdu::NotifyAlert { .. }
-            | Pdu::SetPalette { .. }
             | Pdu::SpawnResponse { .. }
             | Pdu::GetPaneRenderChangesResponse { .. }
             | Pdu::UnitResponse { .. }
             | Pdu::LivenessResponse { .. }
+            | Pdu::GetPaneDirectionResponse { .. }
             | Pdu::SearchScrollbackResponse { .. }
             | Pdu::GetLinesResponse { .. }
             | Pdu::GetCodecVersionResponse { .. }
@@ -746,8 +930,11 @@ impl SessionHandler {
             | Pdu::GetTlsCredsResponse { .. }
             | Pdu::GetClientListResponse { .. }
             | Pdu::PaneRemoved { .. }
+            | Pdu::PaneFocused { .. }
+            | Pdu::TabResized { .. }
             | Pdu::GetImageCellResponse { .. }
             | Pdu::MovePaneToNewTabResponse { .. }
+            | Pdu::TabAddedToWindow { .. }
             | Pdu::GetPaneRenderableDimensionsResponse { .. }
             | Pdu::ErrorResponse { .. } => {
                 send_response(Err(anyhow!("expected a request, got {:?}", decoded.pdu)))

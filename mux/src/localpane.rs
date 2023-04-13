@@ -10,6 +10,7 @@ use anyhow::Error;
 use async_trait::async_trait;
 use config::keyassignment::ScrollbackEraseMode;
 use config::{configuration, ExitBehavior};
+use fancy_regex::Regex;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use procinfo::LocalProcessInfo;
@@ -457,6 +458,19 @@ impl Pane for LocalPane {
             .or_else(|| self.divine_current_working_dir())
     }
 
+    fn tty_name(&self) -> Option<String> {
+        #[cfg(unix)]
+        {
+            let name = self.pty.lock().tty_name()?;
+            Some(name.to_string_lossy().into_owned())
+        }
+
+        #[cfg(windows)]
+        {
+            None
+        }
+    }
+
     fn get_foreground_process_info(&self) -> Option<LocalProcessInfo> {
         #[cfg(unix)]
         if let Some(pid) = self.pty.lock().process_group_leader() {
@@ -509,7 +523,18 @@ impl Pane for LocalPane {
             });
 
             fn default_stateful_check(proc_list: &LocalProcessInfo) -> bool {
-                let names = proc_list.flatten_to_exe_names();
+                // Fig uses `figterm` a pseudo terminal for a lot of functionality, it runs between
+                // the shell and terminal. Unfortunately it is typically named `<shell> (figterm)`,
+                // which prevents the statuful check from passing. This strips the suffix from the
+                // process name to allow the check to pass.
+                let names = proc_list
+                    .flatten_to_exe_names()
+                    .into_iter()
+                    .map(|s| match s.strip_suffix(" (figterm)") {
+                        Some(s) => s.into(),
+                        None => s,
+                    })
+                    .collect::<HashSet<_>>();
 
                 let skip = configuration()
                     .skip_close_confirmation_for_processes_named
@@ -571,7 +596,7 @@ impl Pane for LocalPane {
         enum CompiledPattern {
             CaseSensitiveString(String),
             CaseInSensitiveString(String),
-            Regex(regex::Regex),
+            Regex(Regex),
         }
 
         let pattern = match pattern {
@@ -580,7 +605,7 @@ impl Pane for LocalPane {
                 // normalize the case so we match everything lowercase
                 CompiledPattern::CaseInSensitiveString(s.to_lowercase())
             }
-            Pattern::Regex(r) => CompiledPattern::Regex(regex::Regex::new(&r)?),
+            Pattern::Regex(r) => CompiledPattern::Regex(Regex::new(&r)?),
         };
 
         let mut results = vec![];
@@ -636,22 +661,24 @@ impl Pane for LocalPane {
                 }
                 CompiledPattern::Regex(re) => {
                     // Allow for the regex to contain captures
-                    for c in re.captures_iter(&haystack) {
-                        // Look for the captures in reverse order, as index==0 is
-                        // the whole matched string.  We can't just call
-                        // `c.iter().rev()` as the capture iterator isn't double-ended.
-                        for idx in (0..c.len()).rev() {
-                            if let Some(m) = c.get(idx) {
-                                found_match(
-                                    m.as_str(),
-                                    m.start(),
-                                    lines,
-                                    stable_idx,
-                                    &mut uniq_matches,
-                                    &mut coords,
-                                    &mut results,
-                                );
-                                break;
+                    for capture_res in re.captures_iter(&haystack) {
+                        if let Ok(c) = capture_res {
+                            // Look for the captures in reverse order, as index==0 is
+                            // the whole matched string.  We can't just call
+                            // `c.iter().rev()` as the capture iterator isn't double-ended.
+                            for idx in (0..c.len()).rev() {
+                                if let Some(m) = c.get(idx) {
+                                    found_match(
+                                        m.as_str(),
+                                        m.start(),
+                                        lines,
+                                        stable_idx,
+                                        &mut uniq_matches,
+                                        &mut coords,
+                                        &mut results,
+                                    );
+                                    break;
+                                }
                             }
                         }
                     }
@@ -793,7 +820,7 @@ impl wezterm_term::DeviceControlHandler for LocalPaneDCSHandler {
                 // TODO: do we need to proactively list available tabs here?
                 // if so we should arrange to call domain.attach() and make
                 // it do the right thing.
-                } else {
+                } else if configuration().log_unknown_escape_sequences {
                     log::warn!("unknown DeviceControlMode::Enter {:?}", mode,);
                 }
             }
@@ -808,11 +835,13 @@ impl wezterm_term::DeviceControlHandler for LocalPaneDCSHandler {
                 }
             }
             DeviceControlMode::Data(c) => {
-                log::warn!(
-                    "unhandled DeviceControlMode::Data {:x} {}",
-                    c,
-                    (c as char).escape_debug()
-                );
+                if configuration().log_unknown_escape_sequences {
+                    log::warn!(
+                        "unhandled DeviceControlMode::Data {:x} {}",
+                        c,
+                        (c as char).escape_debug()
+                    );
+                }
             }
             DeviceControlMode::TmuxEvents(events) => {
                 if let Some(tmux) = self.tmux_domain.as_ref() {
@@ -822,7 +851,9 @@ impl wezterm_term::DeviceControlHandler for LocalPaneDCSHandler {
                 }
             }
             _ => {
-                log::warn!("unhandled: {:?}", control);
+                if configuration().log_unknown_escape_sequences {
+                    log::warn!("unhandled: {:?}", control);
+                }
             }
         }
     }

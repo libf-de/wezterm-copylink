@@ -176,7 +176,14 @@ pub type BlockPoint = (BlockCoord, BlockCoord);
 pub enum PolyCommand {
     MoveTo(BlockCoord, BlockCoord),
     LineTo(BlockCoord, BlockCoord),
-    QuadTo { control: BlockPoint, to: BlockPoint },
+    QuadTo {
+        control: BlockPoint,
+        to: BlockPoint,
+    },
+    Oval {
+        center: BlockPoint,
+        radiuses: BlockPoint,
+    },
     Close,
 }
 
@@ -200,6 +207,21 @@ impl PolyCommand {
                 x.to_pixel(width, underline_height),
                 y.to_pixel(height, underline_height),
             ),
+            Self::Oval {
+                center: (x, y),
+                radiuses: (w, h),
+            } => {
+                let x = x.to_pixel(width, underline_height) - width as f32;
+                let y = y.to_pixel(height, underline_height) - height as f32;
+                let w = w.to_pixel(width, underline_height) * 2.0;
+                let h = h.to_pixel(height, underline_height) * 2.0;
+
+                if let Some(oval) = tiny_skia::Rect::from_xywh(x, y, w, h) {
+                    pb.push_oval(oval);
+                } else {
+                    log::error!("Can't push oval, values: {:?}", self);
+                }
+            }
             Self::Close => pb.close(),
         };
     }
@@ -208,6 +230,7 @@ impl PolyCommand {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PolyStyle {
     Fill,
+    OutlineThin,
     // A line with the thickness as underlines
     Outline,
     // A line with twice the thickness of underlines
@@ -221,11 +244,13 @@ impl PolyStyle {
                 pixmap.fill_path(path, paint, FillRule::Winding, Transform::identity(), None);
             }
 
-            PolyStyle::Outline | PolyStyle::OutlineHeavy => {
+            PolyStyle::OutlineThin | PolyStyle::Outline | PolyStyle::OutlineHeavy => {
                 let mut stroke = Stroke::default();
                 stroke.width = width;
                 if self == PolyStyle::OutlineHeavy {
                     stroke.width *= 3.0; // NOTE: Using 2.0, the difference is almost invisible
+                } else if self == PolyStyle::OutlineThin {
+                    stroke.width = 1.2;
                 }
                 pixmap.stroke_path(path, paint, &stroke, Transform::identity(), None);
             }

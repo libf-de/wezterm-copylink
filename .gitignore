@@ -1,6 +1,10 @@
 .DS_Store
 dhat-heap.json
 /docs/_site
+/docs/favicon.png
+/docs/favicon.svg
+/docs/fonts/*
+/mkdocs.yml
 /PKGBUILD
 /WezTerm*.zip
 /WezTerm*.exe
@@ -11,11 +15,13 @@ dhat-heap.json
 /termwiz/codegen/target
 /termwiz/codegen/Cargo.lock
 /gh_pages/
+/docs/releases.json
 /docs/SUMMARY.md
-/docs/install/*.md
 /docs/cli/cli/index.md
 /docs/recipes/index.md
 /docs/colorschemes/**/index.md
+/docs/colorschemes/scheme.css
+/docs/colorschemes/scheme.js
 /docs/config/lua/color/index.md
 /docs/config/lua/config/index.md
 /docs/config/lua/gui-events/index.md
@@ -51,3 +57,4 @@ dhat-heap.json
 .idea/
 /winget-pkgs
 /assets/flatpak/generated-sources.json
+/__pycache__/

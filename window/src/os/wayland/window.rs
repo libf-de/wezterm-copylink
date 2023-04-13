@@ -801,10 +801,9 @@ impl WaylandWindowInner {
         }
 
         self.invalidated = false;
-        self.events.dispatch(WindowEvent::NeedRepaint);
 
-        // Ask the compositor to wake us up when its time to paint
-        // the next frame
+        // Ask the compositor to wake us up when its time to paint the next frame,
+        // note that this only happens _after_ the next commit
         let window_id = self.window_id;
         let callback = self.surface.frame();
         callback.quick_assign(move |_source, _event, _data| {
@@ -814,6 +813,14 @@ impl WaylandWindowInner {
             });
         });
         self.frame_callback.replace(callback);
+
+        // The repaint has the side of effect of committing the surface,
+        // which is necessary for the frame callback to get triggered.
+        // Ordering the repaint after requesting the callback ensures that
+        // we will get woken at the appropriate time.
+        // <https://github.com/wez/wezterm/issues/3468>
+        // <https://github.com/wez/wezterm/issues/3126>
+        self.events.dispatch(WindowEvent::NeedRepaint);
 
         Ok(())
     }

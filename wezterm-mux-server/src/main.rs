@@ -51,6 +51,10 @@ struct Opt {
     #[arg(long = "cwd", value_parser, value_hint=ValueHint::DirPath)]
     cwd: Option<OsString>,
 
+    #[cfg(unix)]
+    #[arg(long, hide = true)]
+    pid_file_fd: Option<i32>,
+
     /// Instead of executing your shell, run PROG.
     /// For example: `wezterm start -- bash -l` will spawn bash
     /// as if it were a login shell.
@@ -60,9 +64,11 @@ struct Opt {
 
 fn main() {
     if let Err(err) = run() {
+        wezterm_blob_leases::clear_storage();
         log::error!("{:#}", err);
         std::process::exit(1);
     }
+    wezterm_blob_leases::clear_storage();
 }
 
 fn run() -> anyhow::Result<()> {
@@ -73,6 +79,16 @@ fn run() -> anyhow::Result<()> {
     let _saver = umask::UmaskSaver::new();
 
     let opts = Opt::parse();
+
+    #[cfg(unix)]
+    {
+        // Ensure that we set CLOEXEC on the inherited lock file
+        // before we have an opportunity to spawn any child processes.
+        if let Some(fd) = opts.pid_file_fd {
+            daemonize::set_cloexec(fd, true);
+        }
+    }
+
     config::common_init(
         opts.config_file.as_ref(),
         &opts.config_override,
@@ -80,10 +96,16 @@ fn run() -> anyhow::Result<()> {
     )?;
 
     let config = config::configuration();
+
+    config.update_ulimit()?;
+
+    #[cfg(unix)]
+    let mut pid_file = None;
+
     #[cfg(unix)]
     {
         if opts.daemonize {
-            daemonize::daemonize(&config)?;
+            pid_file = daemonize::daemonize(&config)?;
             // When we reach this line, we are in a forked child process,
             // and the fork will have broken the async-io/reactor state
             // of the smol runtime.
@@ -98,8 +120,27 @@ fn run() -> anyhow::Result<()> {
         // On Unix, forking breaks the global state maintained by `smol`,
         // so we need to re-exec ourselves to start things back up properly.
         let mut cmd = Command::new(std::env::current_exe().unwrap());
+
+        #[cfg(unix)]
+        {
+            // Inform the new version of ourselves that we already
+            // locked the pidfile so that it can prevent it from
+            // being propagated to its children when they spawn
+            if let Some(fd) = pid_file {
+                cmd.arg("--pid-file-fd");
+                cmd.arg(&fd.to_string());
+            }
+        }
         if opts.skip_config {
             cmd.arg("-n");
+        }
+        if let Some(f) = &opts.config_file {
+            cmd.arg("--config-file");
+            cmd.arg(f);
+        }
+        for (name, value) in &opts.config_override {
+            cmd.arg("--config");
+            cmd.arg(&format!("{name}={value}"));
         }
         if let Some(cwd) = opts.cwd {
             cmd.arg("--cwd");
@@ -159,6 +200,10 @@ fn run() -> anyhow::Result<()> {
         std::env::remove_var(name);
     }
 
+    wezterm_blob_leases::register_storage(Arc::new(
+        wezterm_blob_leases::simple_tempdir::SimpleTempDir::new()?,
+    ))?;
+
     let need_builder = !opts.prog.is_empty() || opts.cwd.is_some();
 
     let cmd = if need_builder {
@@ -215,9 +260,7 @@ async fn async_run(cmd: Option<CommandBuilder>) -> anyhow::Result<()> {
     let domain = mux.default_domain();
 
     {
-        if let Err(err) =
-            config::with_lua_config_on_main_thread(move |lua| trigger_mux_startup(lua)).await
-        {
+        if let Err(err) = config::with_lua_config_on_main_thread(trigger_mux_startup).await {
             log::error!("while processing mux-startup event: {:#}", err);
         }
     }

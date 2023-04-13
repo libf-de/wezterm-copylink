@@ -11,12 +11,14 @@
 //! protocol appears to track the images out of band as attachments with
 //! z-order.
 
+use crate::error::InternalError;
 use ordered_float::NotNan;
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+use wezterm_blob_leases::{BlobLease, BlobManager};
 
 #[cfg(feature = "use_serde")]
 fn deserialize_notnan<'de, D>(deserializer: D) -> Result<NotNan<f32>, D::Error>
@@ -198,6 +200,16 @@ pub enum ImageDataType {
     /// Data is in the native image file format
     /// (best for file formats that have animated content)
     EncodedFile(Vec<u8>),
+    /// Data is in the native image file format,
+    /// (best for file formats that have animated content)
+    /// and is stored as a blob via the blob manager.
+    EncodedLease(
+        #[cfg_attr(
+            feature = "use_serde",
+            serde(with = "wezterm_blob_leases::lease_bytes")
+        )]
+        BlobLease,
+    ),
     /// Data is RGBA u8 data
     Rgba8 {
         data: Vec<u8>,
@@ -222,6 +234,7 @@ impl std::fmt::Debug for ImageDataType {
                 .debug_struct("EncodedFile")
                 .field("data_of_len", &data.len())
                 .finish(),
+            Self::EncodedLease(lease) => lease.fmt(fmt),
             Self::Rgba8 {
                 data,
                 width,
@@ -283,6 +296,7 @@ impl ImageDataType {
         let mut hasher = sha2::Sha256::new();
         match self {
             ImageDataType::EncodedFile(data) => hasher.update(data),
+            ImageDataType::EncodedLease(lease) => return lease.content_id().as_hash_bytes(),
             ImageDataType::Rgba8 { data, .. } => hasher.update(data),
             ImageDataType::AnimRgba8 {
                 frames, durations, ..
@@ -313,6 +327,37 @@ impl ImageDataType {
                 }
             }
             _ => {}
+        }
+    }
+
+    #[cfg(feature = "use_image")]
+    pub fn dimensions(&self) -> Result<(u32, u32), InternalError> {
+        fn dimensions_for_data(data: &[u8]) -> image::ImageResult<(u32, u32)> {
+            let reader =
+                image::io::Reader::new(std::io::Cursor::new(data)).with_guessed_format()?;
+            let (width, height) = reader.into_dimensions()?;
+
+            Ok((width, height))
+        }
+
+        match self {
+            ImageDataType::EncodedFile(data) => Ok(dimensions_for_data(data)?),
+            ImageDataType::EncodedLease(lease) => Ok(dimensions_for_data(&lease.get_data()?)?),
+            ImageDataType::AnimRgba8 { width, height, .. }
+            | ImageDataType::Rgba8 { width, height, .. } => Ok((*width, *height)),
+        }
+    }
+
+    /// Migrate an in-memory encoded image blob to on-disk to reduce
+    /// the memory footprint
+    pub fn swap_out(self) -> Result<Self, InternalError> {
+        match self {
+            Self::EncodedFile(data) => match BlobManager::store(&data) {
+                Ok(lease) => Ok(Self::EncodedLease(lease)),
+                Err(wezterm_blob_leases::Error::StorageNotInit) => Ok(Self::EncodedFile(data)),
+                Err(err) => Err(err.into()),
+            },
+            other => Ok(other),
         }
     }
 
@@ -355,6 +400,16 @@ impl ImageDataType {
                             }
                         } else {
                             Self::decode_single(data)
+                        }
+                    }
+                    ImageFormat::WebP => {
+                        let decoder = match image::codecs::webp::WebPDecoder::new(&*data) {
+                            Ok(d) => d,
+                            _ => return Self::EncodedFile(data),
+                        };
+                        match decoder.into_frames().collect_frames() {
+                            Ok(frames) => Self::decode_frames(frames),
+                            _ => Self::EncodedFile(data),
                         }
                     }
                     _ => Self::decode_single(data),
@@ -416,20 +471,35 @@ impl ImageDataType {
     }
 }
 
-static IMAGE_ID: ::std::sync::atomic::AtomicUsize = ::std::sync::atomic::AtomicUsize::new(0);
-
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
 pub struct ImageData {
-    id: usize,
     data: Mutex<ImageDataType>,
     hash: [u8; 32],
+}
+
+struct HexSlice<'a>(&'a [u8]);
+impl<'a> std::fmt::Display for HexSlice<'a> {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(fmt, "{byte:x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for ImageData {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fmt.debug_struct("ImageData")
+            .field("data", &self.data)
+            .field("hash", &format_args!("{}", HexSlice(&self.hash)))
+            .finish()
+    }
 }
 
 impl Eq for ImageData {}
 impl PartialEq for ImageData {
     fn eq(&self, rhs: &Self) -> bool {
-        self.id == rhs.id
+        self.hash == rhs.hash
     }
 }
 
@@ -441,19 +511,15 @@ impl ImageData {
     }
 
     fn with_data_and_hash(data: ImageDataType, hash: [u8; 32]) -> Self {
-        let id = IMAGE_ID.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
         Self {
-            id,
             data: Mutex::new(data),
             hash,
         }
     }
 
     pub fn with_data(data: ImageDataType) -> Self {
-        let id = IMAGE_ID.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
         let hash = data.compute_hash();
         Self {
-            id,
             data: Mutex::new(data),
             hash,
         }
@@ -463,6 +529,7 @@ impl ImageData {
     pub fn len(&self) -> usize {
         match &*self.data() {
             ImageDataType::EncodedFile(d) => d.len(),
+            ImageDataType::EncodedLease(_) => 0,
             ImageDataType::Rgba8 { data, .. } => data.len(),
             ImageDataType::AnimRgba8 { frames, .. } => frames.len() * frames[0].len(),
         }
@@ -470,10 +537,6 @@ impl ImageData {
 
     pub fn data(&self) -> MutexGuard<ImageDataType> {
         self.data.lock().unwrap()
-    }
-
-    pub fn id(&self) -> usize {
-        self.id
     }
 
     pub fn hash(&self) -> [u8; 32] {

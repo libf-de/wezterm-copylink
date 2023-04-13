@@ -1,6 +1,12 @@
+---
+title: wezterm.config_builder
+tags:
+ - utility
+---
+
 # wezterm.config_builder()
 
-*Since: nightly builds only*
+{{since('20230320-124340-559cb7b0')}}
 
 Returns a config builder object that can be used to define your configuration:
 

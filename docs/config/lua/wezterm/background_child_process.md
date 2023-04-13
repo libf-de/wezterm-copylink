@@ -1,6 +1,14 @@
+---
+title: wezterm.background_child_process
+tags:
+ - utility
+ - open
+ - spawn
+---
+
 # `wezterm.background_child_process(args)`
 
-*Since: 20211204-082213-a66c61ee9*
+{{since('20211204-082213-a66c61ee9')}}
 
 This function accepts an argument list; it will attempt to spawn that command
 in the background.

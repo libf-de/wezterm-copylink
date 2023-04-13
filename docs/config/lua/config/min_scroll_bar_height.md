@@ -1,6 +1,11 @@
+---
+tags:
+  - appearance
+  - scroll_bar
+---
 # `min_scroll_bar_height = "0.5cell"`
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 Controls the minimum size of the scroll bar "thumb".
 

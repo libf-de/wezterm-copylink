@@ -26,7 +26,10 @@ fn compute_repo_dir(url: &str) -> String {
             ':' => {
                 dir.push_str("sCs");
             }
-            '.' | '-' | '_' => dir.push(c),
+            '.' => {
+                dir.push_str("sDs");
+            }
+            '-' | '_' => dir.push(c),
             c if c.is_alphanumeric() => dir.push(c),
             c => dir.push_str(&format!("u{}", c as u32)),
         }
@@ -101,7 +104,7 @@ impl RepoSpec {
         let mut merge_info = None;
         repo.fetchhead_foreach(|refname, _remote_url, target_oid, was_merge| {
             if was_merge {
-                merge_info.replace((refname.to_string(), target_oid.clone()));
+                merge_info.replace((refname.to_string(), *target_oid));
                 return true;
             }
             false
@@ -244,8 +247,8 @@ mod test {
         for (input, expect) in &[
             ("foo", "foo"),
             (
-                "github.com/wez/wezterm-plugins",
-                "github.comsZswezsZswezterm-plugins",
+                "githubsDscom/wez/wezterm-plugins",
+                "githubsDscomsZswezsZswezterm-plugins",
             ),
             ("localhost:8080/repo", "localhostsCs8080sZsrepo"),
         ] {

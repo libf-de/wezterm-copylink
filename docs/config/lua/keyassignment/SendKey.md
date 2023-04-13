@@ -1,6 +1,6 @@
-# SendKey
+# `SendKey`
 
-*Since: 20211204-082213-a66c61ee9*
+{{since('20211204-082213-a66c61ee9')}}
 
 Send the specified key press to the current pane.  This is useful to rebind
 the effect of a key combination.
@@ -18,25 +18,22 @@ shells and applications.
 The following configuration achieves that same effect:
 
 ```lua
-local wezterm = require 'wezterm'
 local act = wezterm.action
 
-return {
-  keys = {
-    -- Rebind OPT-Left, OPT-Right as ALT-b, ALT-f respectively to match Terminal.app behavior
-    {
-      key = 'LeftArrow',
-      mods = 'OPT',
-      action = act.SendKey {
-        key = 'b',
-        mods = 'ALT',
-      },
+config.keys = {
+  -- Rebind OPT-Left, OPT-Right as ALT-b, ALT-f respectively to match Terminal.app behavior
+  {
+    key = 'LeftArrow',
+    mods = 'OPT',
+    action = act.SendKey {
+      key = 'b',
+      mods = 'ALT',
     },
-    {
-      key = 'RightArrow',
-      mods = 'OPT',
-      action = act.SendKey { key = 'f', mods = 'ALT' },
-    },
+  },
+  {
+    key = 'RightArrow',
+    mods = 'OPT',
+    action = act.SendKey { key = 'f', mods = 'ALT' },
   },
 }
 ```

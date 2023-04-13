@@ -142,6 +142,7 @@ async fn process_unilateral_inner_async(
     let local_pane_id = match client_domain.remote_to_local_pane_id(pane_id) {
         Some(p) => p,
         None => {
+            log::debug!("got {decoded:?}, pane not found locally, resync");
             client_domain.resync().await?;
             client_domain
                 .remote_to_local_pane_id(pane_id)
@@ -151,9 +152,23 @@ async fn process_unilateral_inner_async(
         }
     };
 
-    let pane = mux
-        .get_pane(local_pane_id)
-        .ok_or_else(|| anyhow!("no such pane {}", local_pane_id))?;
+    let pane = match mux.get_pane(local_pane_id) {
+        Some(p) => p,
+        None => {
+            log::debug!("got {decoded:?}, but local pane {local_pane_id} no longer exists; resync");
+            client_domain.resync().await?;
+
+            let local_pane_id =
+                client_domain
+                    .remote_to_local_pane_id(pane_id)
+                    .ok_or_else(|| {
+                        anyhow!("remote pane id {} does not have a local pane id", pane_id)
+                    })?;
+
+            mux.get_pane(local_pane_id)
+                .ok_or_else(|| anyhow!("local pane {local_pane_id} not found"))?
+        }
+    };
     let client_pane = pane.downcast_ref::<ClientPane>().ok_or_else(|| {
         log::error!(
             "received unilateral PDU for pane {} which is \
@@ -215,6 +230,83 @@ fn process_unilateral(
                 }
 
                 anyhow::Result::<()>::Ok(())
+            })
+            .detach();
+
+            return Ok(());
+        }
+        Pdu::WindowTitleChanged(WindowTitleChanged { window_id, title }) => {
+            let title = title.to_string();
+            let window_id = *window_id;
+            promise::spawn::spawn_into_main_thread(async move {
+                let mux = Mux::try_get().ok_or_else(|| anyhow!("no more mux"))?;
+                let client_domain = mux
+                    .get_domain(local_domain_id)
+                    .ok_or_else(|| anyhow!("no such domain {}", local_domain_id))?;
+                let client_domain =
+                    client_domain
+                        .downcast_ref::<ClientDomain>()
+                        .ok_or_else(|| {
+                            anyhow!("domain {} is not a ClientDomain instance", local_domain_id)
+                        })?;
+
+                client_domain.process_remote_window_title_change(window_id, title);
+                anyhow::Result::<()>::Ok(())
+            })
+            .detach();
+            return Ok(());
+        }
+        Pdu::RenameWorkspace(RenameWorkspace {
+            old_workspace,
+            new_workspace,
+        }) => {
+            let old_workspace = old_workspace.to_string();
+            let new_workspace = new_workspace.to_string();
+            promise::spawn::spawn_into_main_thread(async move {
+                let mux = Mux::try_get().ok_or_else(|| anyhow!("no more mux"))?;
+                log::debug!("got a rename {old_workspace} -> {new_workspace}");
+                mux.rename_workspace(&old_workspace, &new_workspace);
+                anyhow::Result::<()>::Ok(())
+            })
+            .detach();
+            return Ok(());
+        }
+        Pdu::TabTitleChanged(TabTitleChanged { tab_id, title }) => {
+            let title = title.to_string();
+            let tab_id = *tab_id;
+            promise::spawn::spawn_into_main_thread(async move {
+                let mux = Mux::try_get().ok_or_else(|| anyhow!("no more mux"))?;
+                let client_domain = mux
+                    .get_domain(local_domain_id)
+                    .ok_or_else(|| anyhow!("no such domain {}", local_domain_id))?;
+                let client_domain =
+                    client_domain
+                        .downcast_ref::<ClientDomain>()
+                        .ok_or_else(|| {
+                            anyhow!("domain {} is not a ClientDomain instance", local_domain_id)
+                        })?;
+
+                client_domain.process_remote_tab_title_change(tab_id, title);
+                anyhow::Result::<()>::Ok(())
+            })
+            .detach();
+            return Ok(());
+        }
+        Pdu::TabResized(_) | Pdu::TabAddedToWindow(_) => {
+            log::trace!("resync due to {:?}", decoded.pdu);
+            promise::spawn::spawn_into_main_thread(async move {
+                let mux = Mux::try_get().ok_or_else(|| anyhow!("no more mux"))?;
+                let client_domain = mux
+                    .get_domain(local_domain_id)
+                    .ok_or_else(|| anyhow!("no such domain {}", local_domain_id))?;
+                let client_domain =
+                    client_domain
+                        .downcast_ref::<ClientDomain>()
+                        .ok_or_else(|| {
+                            anyhow!("domain {} is not a ClientDomain instance", local_domain_id)
+                        })?;
+
+                client_domain.resync().await
             })
             .detach();
 
@@ -299,7 +391,11 @@ async fn client_thread_async(
             Ok(ReaderMessage::Readable) => {
                 match Pdu::decode_async(&mut stream, Some(next_serial)).await {
                     Ok(decoded) => {
-                        log::trace!("decoded serial {}", decoded.serial);
+                        log::debug!(
+                            "decoded serial {} {}",
+                            decoded.serial,
+                            decoded.pdu.pdu_name()
+                        );
                         if decoded.serial == 0 {
                             process_unilateral(local_domain_id, decoded)
                                 .context("processing unilateral PDU from server")
@@ -348,7 +444,7 @@ pub fn unix_connect_with_retry(
 
     for iter in 0..max_attempts {
         if iter > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(iter * 10));
+            std::thread::sleep(std::time::Duration::from_millis(iter * 50));
         }
         match target {
             UnixTarget::Socket(path) => match UnixStream::connect(path) {
@@ -573,7 +669,7 @@ impl Reconnectable {
             format!("{} cli --prefer-mux --no-auto-start proxy", proxy_bin)
         };
         ui.output_str(&format!("Running: {}\n", cmd));
-        log::info!("going to run {}", cmd);
+        log::debug!("going to run {}", cmd);
 
         let exec = smol::block_on(sess.exec(&cmd, None))?;
 
@@ -901,8 +997,7 @@ impl Reconnectable {
                 .connect(
                     tls_client
                         .expected_cn
-                        .as_ref()
-                        .map(String::as_str)
+                        .as_deref()
                         .unwrap_or(remote_host_name),
                     stream,
                 )
@@ -1222,4 +1317,14 @@ impl Client {
     rpc!(set_window_workspace, SetWindowWorkspace, UnitResponse);
     rpc!(set_focused_pane_id, SetFocusedPane, UnitResponse);
     rpc!(get_image_cell, GetImageCell, GetImageCellResponse);
+    rpc!(set_configured_palette_for_pane, SetPalette, UnitResponse);
+    rpc!(set_tab_title, TabTitleChanged, UnitResponse);
+    rpc!(set_window_title, WindowTitleChanged, UnitResponse);
+    rpc!(rename_workspace, RenameWorkspace, UnitResponse);
+    rpc!(erase_scrollback, EraseScrollbackRequest, UnitResponse);
+    rpc!(
+        get_pane_direction,
+        GetPaneDirection,
+        GetPaneDirectionResponse
+    );
 }

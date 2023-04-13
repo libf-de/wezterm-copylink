@@ -1,4 +1,8 @@
-# font_dirs
+---
+tags:
+  - font
+---
+# `font_dirs`
 
 By default, wezterm will use an appropriate system-specific method for
 locating the fonts that you specify using the options below.  In addition,
@@ -6,13 +10,11 @@ if you configure the `font_dirs` option, wezterm will load fonts from that
 set of directories:
 
 ```lua
-return {
-  -- This tells wezterm to look first for fonts in the directory named
-  -- `fonts` that is found alongside your `wezterm.lua` file.
-  -- As this option is an array, you may list multiple locations if
-  -- you wish.
-  font_dirs = { 'fonts' },
-}
+-- This tells wezterm to look first for fonts in the directory named
+-- `fonts` that is found alongside your `wezterm.lua` file.
+-- As this option is an array, you may list multiple locations if
+-- you wish.
+config.font_dirs = { 'fonts' }
 ```
 
 wezterm will scan the `font_dirs` to build a database of available fonts.  When
@@ -27,9 +29,7 @@ systems and don't want to install those fonts on every system that you use,
 then you can set:
 
 ```lua
-return {
-  font_locator = 'ConfigDirsOnly',
-}
+config.font_locator = 'ConfigDirsOnly'
 ```
 
 

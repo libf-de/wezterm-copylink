@@ -105,7 +105,7 @@ impl TabStop {
         }
     }
 
-    fn clear(&mut self, to_clear: TabulationClear, col: usize) {
+    fn clear(&mut self, to_clear: TabulationClear, col: usize, log_unknown_escape_sequences: bool) {
         match to_clear {
             TabulationClear::ClearCharacterTabStopAtActivePosition => {
                 if let Some(t) = self.tabs.get_mut(col) {
@@ -120,7 +120,11 @@ impl TabStop {
                     *t = false;
                 }
             }
-            _ => log::warn!("unhandled TabulationClear {:?}", to_clear),
+            _ => {
+                if log_unknown_escape_sequences {
+                    log::warn!("unhandled TabulationClear {:?}", to_clear);
+                }
+            }
         }
     }
 }
@@ -1200,7 +1204,11 @@ impl TerminalState {
 
     fn perform_device(&mut self, dev: Device) {
         match dev {
-            Device::DeviceAttributes(a) => log::warn!("unhandled: {:?}", a),
+            Device::DeviceAttributes(a) => {
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("unhandled: {:?}", a);
+                }
+            }
             Device::SoftReset => {
                 // TODO: see https://vt100.net/docs/vt510-rm/DECSTR.html
                 self.pen = CellAttributes::default();
@@ -1846,11 +1854,15 @@ impl TerminalState {
             | Mode::ResetDecPrivateMode(DecPrivateMode::Unspecified(_))
             | Mode::SaveDecPrivateMode(DecPrivateMode::Unspecified(_))
             | Mode::RestoreDecPrivateMode(DecPrivateMode::Unspecified(_)) => {
-                log::warn!("unhandled DecPrivateMode {:?}", mode);
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("unhandled DecPrivateMode {:?}", mode);
+                }
             }
 
             mode @ Mode::SetMode(_) | mode @ Mode::ResetMode(_) => {
-                log::warn!("unhandled {:?}", mode);
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("unhandled {:?}", mode);
+                }
             }
 
             Mode::XtermKeyMode {
@@ -1865,7 +1877,9 @@ impl TerminalState {
             }
 
             Mode::XtermKeyMode { resource, value } => {
-                log::warn!("unhandled XtermKeyMode {:?} {:?}", resource, value);
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("unhandled XtermKeyMode {:?} {:?}", resource, value);
+                }
             }
 
             Mode::QueryDecPrivateMode(_) | Mode::QueryMode(_) => {
@@ -1905,7 +1919,7 @@ impl TerminalState {
                     break;
                 }
 
-                let ch = cell.str().chars().nth(0).unwrap() as u32;
+                let ch = cell.str().chars().next().unwrap() as u32;
                 // debug!("y={} col={} ch={:x} cell={:?}", y + y_origin, col, ch, cell);
 
                 checksum += u16::from(ch as u8);
@@ -1988,7 +2002,11 @@ impl TerminalState {
             | Window::PushIconTitle
             | Window::PushWindowTitle => {}
 
-            _ => log::warn!("unhandled Window CSI {:?}", window),
+            _ => {
+                if self.config.log_unknown_escape_sequences() {
+                    log::warn!("unhandled Window CSI {:?}", window);
+                }
+            }
         }
     }
 
@@ -2017,7 +2035,7 @@ impl TerminalState {
         {
             let bidi_mode = self.get_bidi_mode();
             let screen = self.screen_mut();
-            for y in row_range.clone() {
+            for y in row_range {
                 screen.clear_line(y, col_range.clone(), &pen, seqno, bidi_mode);
                 let line_idx = screen.phys_row(y);
                 screen.line_mut(line_idx).set_single_width(seqno);
@@ -2098,7 +2116,7 @@ impl TerminalState {
                 };
 
                 self.screen_mut()
-                    .clear_line(cy, range.clone(), &pen, seqno, bidi_mode);
+                    .clear_line(cy, range, &pen, seqno, bidi_mode);
             }
             Edit::InsertCharacter(n) => {
                 // https://vt100.net/docs/vt510-rm/ICH.html
@@ -2270,7 +2288,11 @@ impl TerminalState {
             }
 
             Cursor::TabulationClear(to_clear) => {
-                self.tabs.clear(to_clear, self.cursor.x);
+                self.tabs.clear(
+                    to_clear,
+                    self.cursor.x,
+                    self.config.log_unknown_escape_sequences(),
+                );
             }
 
             Cursor::TabulationControl(_) => {}

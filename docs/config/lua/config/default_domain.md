@@ -1,6 +1,10 @@
+---
+tags:
+  - multiplexing
+---
 # `default_domain = "local"`
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 When starting the GUI (not using the `serial` or `connect` subcommands), by default wezterm will set the built-in `"local"` domain as the default multiplexing domain.
 
@@ -27,9 +31,7 @@ then wezterm will by default create a `WslDomain` with the name `"WSL:Ubuntu-18.
 and if I set my config like this:
 
 ```lua
-return {
-  default_domain = 'WSL:Ubuntu-18.04',
-}
+config.default_domain = 'WSL:Ubuntu-18.04'
 ```
 
 then when wezterm starts up, it will open with a shell running inside that Ubuntu

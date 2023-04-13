@@ -4,31 +4,31 @@ By default, when opening new tabs or windows, your shell will be spawned.
 
 Your shell is determined by the following rules:
 
-### On Posix Systems
+=== "On Posix Systems"
 
-1. The value of the `$SHELL` environment variable is used if it is set
-2. Otherwise, it will resolve your current uid and try to look up your
-   shell from the password database.
+    1. The value of the `$SHELL` environment variable is used if it is set
+    2. Otherwise, it will resolve your current uid and try to look up your
+    shell from the password database.
 
-`wezterm` will spawn the shell and pass `-l` as an argument to request
-a login shell.  A login shell generally loads additional startup files
-and sets up more environment than a non-login shell.
+    `wezterm` will spawn the shell and pass `-l` as an argument to request
+    a login shell.  A login shell generally loads additional startup files
+    and sets up more environment than a non-login shell.
 
-*Since: 20210502-154244-3f7122cb*: instead of passing `-l` to the shell, wezterm
-will spawn the shell as `-$SHELL` to invoke it as a login shell.
+    {{since('20210502-154244-3f7122cb', inline=True)}}: instead of passing `-l` to the shell, wezterm
+    will spawn the shell as `-$SHELL` to invoke it as a login shell.
 
-Note: if you have recently changed your shell using `chsh` and you
-have `$SHELL` set in the environment, you will need to sign out and
-sign back in again for the environment to pick up your new `$SHELL`
-value.
+    Note: if you have recently changed your shell using `chsh` and you
+    have `$SHELL` set in the environment, you will need to sign out and
+    sign back in again for the environment to pick up your new `$SHELL`
+    value.
 
-*Since: 20220903-194523-3bb1ed61*: wezterm will now always resolve the shell via the
-password database.
+    {{since('20220903-194523-3bb1ed61', inline=True)}}: wezterm will now always resolve the shell via the
+    password database.
 
-### On Windows Systems
+=== "On Windows Systems"
 
-1. The value of the `%COMSPEC%` environment variable is used if it is set.
-2. Otherwise, `cmd.exe`
+    1. The value of the `%COMSPEC%` environment variable is used if it is set.
+    2. Otherwise, `cmd.exe`
 
 ## Changing the default program
 
@@ -38,10 +38,8 @@ the argument array; the array allows specifying the program and arguments
 portably:
 
 ```lua
-return {
-  -- Spawn a fish shell in login mode
-  default_prog = { '/usr/local/bin/fish', '-l' },
-}
+-- Spawn a fish shell in login mode
+config.default_prog = { '/usr/local/bin/fish', '-l' }
 ```
 
 ## Launching a different program as a one off via the CLI
@@ -51,8 +49,8 @@ for example, open an editor in wezterm you can use the `start` subcommand
 to launch it.  This example opens up a new terminal window running vim
 to edit your wezterm configuration:
 
-```bash
-wezterm start -- vim ~/.wezterm.lua
+```console
+$ wezterm start -- vim ~/.wezterm.lua
 ```
 
 ## Specifying the current working directory
@@ -64,15 +62,13 @@ directory you can do so via the config, CLI, and when using
 * Setting the [`default_cwd`](lua/config/default_cwd.md) via the config:
 
   ```lua
-  return {
-    default_cwd = "/some/path",
-  }
+  config.default_cwd = "/some/path"
   ```
 
 * One off program in a specific working directory via the CLI:
 
-  ```bash
-  wezterm start --cwd /some/path
+  ```console
+  $ wezterm start --cwd /some/path
   ```
 
 * The [`SpawnCommandInNewTab`](lua/keyassignment/SpawnCommandInNewTab.md),
@@ -108,13 +104,11 @@ The behavior is to take the environment of the `wezterm` process
 and then set the specified variables for the spawned process.
 
 ```lua
-return {
-  set_environment_variables = {
-    -- This changes the default prompt for cmd.exe to report the
-    -- current directory using OSC 7, show the current time and
-    -- the current directory colored in the prompt.
-    prompt = '$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ',
-  },
+config.set_environment_variables = {
+  -- This changes the default prompt for cmd.exe to report the
+  -- current directory using OSC 7, show the current time and
+  -- the current directory colored in the prompt.
+  prompt = '$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ',
 }
 ```
 
@@ -140,42 +134,39 @@ Each entry in `launch_menu` is an instance of a
 [SpawnCommand](lua/SpawnCommand.md) object.
 
 ```lua
-return {
-  launch_menu = {
-    {
-      args = { 'top' },
-    },
-    {
-      -- Optional label to show in the launcher. If omitted, a label
-      -- is derived from the `args`
-      label = 'Bash',
-      -- The argument array to spawn.  If omitted the default program
-      -- will be used as described in the documentation above
-      args = { 'bash', '-l' },
+config.launch_menu = {
+  {
+    args = { 'top' },
+  },
+  {
+    -- Optional label to show in the launcher. If omitted, a label
+    -- is derived from the `args`
+    label = 'Bash',
+    -- The argument array to spawn.  If omitted the default program
+    -- will be used as described in the documentation above
+    args = { 'bash', '-l' },
 
-      -- You can specify an alternative current working directory;
-      -- if you don't specify one then a default based on the OSC 7
-      -- escape sequence will be used (see the Shell Integration
-      -- docs), falling back to the home directory.
-      -- cwd = "/some/path"
+    -- You can specify an alternative current working directory;
+    -- if you don't specify one then a default based on the OSC 7
+    -- escape sequence will be used (see the Shell Integration
+    -- docs), falling back to the home directory.
+    -- cwd = "/some/path"
 
-      -- You can override environment variables just for this command
-      -- by setting this here.  It has the same semantics as the main
-      -- set_environment_variables configuration option described above
-      -- set_environment_variables = { FOO = "bar" },
-    },
+    -- You can override environment variables just for this command
+    -- by setting this here.  It has the same semantics as the main
+    -- set_environment_variables configuration option described above
+    -- set_environment_variables = { FOO = "bar" },
   },
 }
 ```
 
-<img src="../screenshots/launch-menu.png" alt="Screenshot">
+![Launch Menu](../screenshots/launch-menu.png)
 
 Here's a fancy example that will add some helpful entries to the launcher
 menu when running on Windows:
 
 ```lua
 local wezterm = require 'wezterm'
-
 local launch_menu = {}
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then

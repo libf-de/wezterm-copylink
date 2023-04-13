@@ -17,6 +17,8 @@ use serial::{
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Result as IoResult, Write};
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -242,7 +244,12 @@ impl MasterPty for Master {
     }
 
     #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
+    fn as_raw_fd(&self) -> Option<crate::unix::RawFd> {
+        None
+    }
+
+    #[cfg(unix)]
+    fn tty_name(&self) -> Option<PathBuf> {
         None
     }
 }

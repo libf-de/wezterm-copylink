@@ -205,9 +205,70 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (activate-pane-direction)
 _arguments "${_arguments_options[@]}" \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':direction -- The direction to switch to:(Up Down Left Right Next Prev)' \
+&& ret=0
+;;
+(get-pane-direction)
+_arguments "${_arguments_options[@]}" \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':direction -- The direction to consider:(Up Down Left Right Next Prev)' \
+&& ret=0
+;;
+(kill-pane)
+_arguments "${_arguments_options[@]}" \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(activate-pane)
+_arguments "${_arguments_options[@]}" \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(activate-tab)
+_arguments "${_arguments_options[@]}" \
+'(--tab-index --tab-relative --no-wrap --pane-id)--tab-id=[Specify the target tab by its id]:TAB_ID: ' \
+'--tab-index=[Specify the target tab by its index within the window that holds the current pane. Indices are 0-based, with 0 being the left-most tab. Negative numbers can be used to reference the right-most tab, so -1 is the right-most tab, -2 is the penultimate tab and so on]:TAB_INDEX: ' \
+'--tab-relative=[Specify the target tab by its relative offset. -1 selects the tab to the left. -2 two tabs to the left. 1 is one tab to the right and so on]:TAB_RELATIVE: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--no-wrap[When used with tab-relative, prevents wrapping around and will instead clamp to the left-most when moving left or right-most when moving right]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(set-tab-title)
+_arguments "${_arguments_options[@]}" \
+'(--pane-id)--tab-id=[Specify the target tab by its id]:TAB_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':title -- The new title for the tab:' \
+&& ret=0
+;;
+(set-window-title)
+_arguments "${_arguments_options[@]}" \
+'(--pane-id)--window-id=[Specify the target window by its id]:WINDOW_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':title -- The new title for the window:' \
+&& ret=0
+;;
+(rename-workspace)
+_arguments "${_arguments_options[@]}" \
+'--workspace=[Specify the workspace to rename]:WORKSPACE: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':new_workspace -- The new name for the workspace:' \
 && ret=0
 ;;
 (help)
@@ -262,6 +323,34 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
+(get-pane-direction)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(kill-pane)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(activate-pane)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(activate-tab)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(set-tab-title)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(set-window-title)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(rename-workspace)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" \
 && ret=0
@@ -302,6 +391,8 @@ _arguments "${_arguments_options[@]}" \
 (replay)
 _arguments "${_arguments_options[@]}" \
 '--explain[Explain what is being sent/received]' \
+'(--explain)--explain-only[Don'\''t replay, just show the explanation]' \
+'(--explain)--cat[Just emit raw escape sequences all at once, with no timing information]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':cast_file:_files' \
@@ -402,6 +493,34 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
+(get-pane-direction)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(kill-pane)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(activate-pane)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(activate-tab)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(set-tab-title)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(set-window-title)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(rename-workspace)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
         esac
     ;;
 esac
@@ -458,6 +577,21 @@ _wezterm_commands() {
     )
     _describe -t commands 'wezterm commands' commands "$@"
 }
+(( $+functions[_wezterm__cli__activate-pane_commands] )) ||
+_wezterm__cli__activate-pane_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli activate-pane commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__help__activate-pane_commands] )) ||
+_wezterm__cli__help__activate-pane_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli help activate-pane commands' commands "$@"
+}
+(( $+functions[_wezterm__help__cli__activate-pane_commands] )) ||
+_wezterm__help__cli__activate-pane_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm help cli activate-pane commands' commands "$@"
+}
 (( $+functions[_wezterm__cli__activate-pane-direction_commands] )) ||
 _wezterm__cli__activate-pane-direction_commands() {
     local commands; commands=()
@@ -472,6 +606,21 @@ _wezterm__cli__help__activate-pane-direction_commands() {
 _wezterm__help__cli__activate-pane-direction_commands() {
     local commands; commands=()
     _describe -t commands 'wezterm help cli activate-pane-direction commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__activate-tab_commands] )) ||
+_wezterm__cli__activate-tab_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli activate-tab commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__help__activate-tab_commands] )) ||
+_wezterm__cli__help__activate-tab_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli help activate-tab commands' commands "$@"
+}
+(( $+functions[_wezterm__help__cli__activate-tab_commands] )) ||
+_wezterm__help__cli__activate-tab_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm help cli activate-tab commands' commands "$@"
 }
 (( $+functions[_wezterm__cli_commands] )) ||
 _wezterm__cli_commands() {
@@ -488,6 +637,13 @@ Outputs the pane-id for the newly created pane on success' \
 'send-text:Send text to a pane as though it were pasted. If bracketed paste mode is enabled in the pane, then the text will be sent as a bracketed paste' \
 'get-text:Retrieves the textual content of a pane and output it to stdout' \
 'activate-pane-direction:Activate an adjacent pane in the specified direction' \
+'get-pane-direction:Determine the adjacent pane in the specified direction' \
+'kill-pane:Kill a pane' \
+'activate-pane:Activate (focus) a pane' \
+'activate-tab:Activate a tab' \
+'set-tab-title:Change the title of a tab' \
+'set-window-title:Change the title of a window' \
+'rename-workspace:Rename a workspace' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'wezterm cli commands' commands "$@"
@@ -507,6 +663,13 @@ Outputs the pane-id for the newly created pane on success' \
 'send-text:Send text to a pane as though it were pasted. If bracketed paste mode is enabled in the pane, then the text will be sent as a bracketed paste' \
 'get-text:Retrieves the textual content of a pane and output it to stdout' \
 'activate-pane-direction:Activate an adjacent pane in the specified direction' \
+'get-pane-direction:Determine the adjacent pane in the specified direction' \
+'kill-pane:Kill a pane' \
+'activate-pane:Activate (focus) a pane' \
+'activate-tab:Activate a tab' \
+'set-tab-title:Change the title of a tab' \
+'set-window-title:Change the title of a window' \
+'rename-workspace:Rename a workspace' \
     )
     _describe -t commands 'wezterm help cli commands' commands "$@"
 }
@@ -519,6 +682,21 @@ _wezterm__connect_commands() {
 _wezterm__help__connect_commands() {
     local commands; commands=()
     _describe -t commands 'wezterm help connect commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__get-pane-direction_commands] )) ||
+_wezterm__cli__get-pane-direction_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli get-pane-direction commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__help__get-pane-direction_commands] )) ||
+_wezterm__cli__help__get-pane-direction_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli help get-pane-direction commands' commands "$@"
+}
+(( $+functions[_wezterm__help__cli__get-pane-direction_commands] )) ||
+_wezterm__help__cli__get-pane-direction_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm help cli get-pane-direction commands' commands "$@"
 }
 (( $+functions[_wezterm__cli__get-text_commands] )) ||
 _wezterm__cli__get-text_commands() {
@@ -550,6 +728,13 @@ Outputs the pane-id for the newly created pane on success' \
 'send-text:Send text to a pane as though it were pasted. If bracketed paste mode is enabled in the pane, then the text will be sent as a bracketed paste' \
 'get-text:Retrieves the textual content of a pane and output it to stdout' \
 'activate-pane-direction:Activate an adjacent pane in the specified direction' \
+'get-pane-direction:Determine the adjacent pane in the specified direction' \
+'kill-pane:Kill a pane' \
+'activate-pane:Activate (focus) a pane' \
+'activate-tab:Activate a tab' \
+'set-tab-title:Change the title of a tab' \
+'set-window-title:Change the title of a window' \
+'rename-workspace:Rename a workspace' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'wezterm cli help commands' commands "$@"
@@ -592,6 +777,21 @@ _wezterm__help__imgcat_commands() {
 _wezterm__imgcat_commands() {
     local commands; commands=()
     _describe -t commands 'wezterm imgcat commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__help__kill-pane_commands] )) ||
+_wezterm__cli__help__kill-pane_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli help kill-pane commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__kill-pane_commands] )) ||
+_wezterm__cli__kill-pane_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli kill-pane commands' commands "$@"
+}
+(( $+functions[_wezterm__help__cli__kill-pane_commands] )) ||
+_wezterm__help__cli__kill-pane_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm help cli kill-pane commands' commands "$@"
 }
 (( $+functions[_wezterm__cli__help__list_commands] )) ||
 _wezterm__cli__help__list_commands() {
@@ -673,6 +873,21 @@ _wezterm__record_commands() {
     local commands; commands=()
     _describe -t commands 'wezterm record commands' commands "$@"
 }
+(( $+functions[_wezterm__cli__help__rename-workspace_commands] )) ||
+_wezterm__cli__help__rename-workspace_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli help rename-workspace commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__rename-workspace_commands] )) ||
+_wezterm__cli__rename-workspace_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli rename-workspace commands' commands "$@"
+}
+(( $+functions[_wezterm__help__cli__rename-workspace_commands] )) ||
+_wezterm__help__cli__rename-workspace_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm help cli rename-workspace commands' commands "$@"
+}
 (( $+functions[_wezterm__help__replay_commands] )) ||
 _wezterm__help__replay_commands() {
     local commands; commands=()
@@ -707,6 +922,36 @@ _wezterm__help__serial_commands() {
 _wezterm__serial_commands() {
     local commands; commands=()
     _describe -t commands 'wezterm serial commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__help__set-tab-title_commands] )) ||
+_wezterm__cli__help__set-tab-title_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli help set-tab-title commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__set-tab-title_commands] )) ||
+_wezterm__cli__set-tab-title_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli set-tab-title commands' commands "$@"
+}
+(( $+functions[_wezterm__help__cli__set-tab-title_commands] )) ||
+_wezterm__help__cli__set-tab-title_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm help cli set-tab-title commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__help__set-window-title_commands] )) ||
+_wezterm__cli__help__set-window-title_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli help set-window-title commands' commands "$@"
+}
+(( $+functions[_wezterm__cli__set-window-title_commands] )) ||
+_wezterm__cli__set-window-title_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm cli set-window-title commands' commands "$@"
+}
+(( $+functions[_wezterm__help__cli__set-window-title_commands] )) ||
+_wezterm__help__cli__set-window-title_commands() {
+    local commands; commands=()
+    _describe -t commands 'wezterm help cli set-window-title commands' commands "$@"
 }
 (( $+functions[_wezterm__help__set-working-directory_commands] )) ||
 _wezterm__help__set-working-directory_commands() {
@@ -804,4 +1049,8 @@ _wezterm__help__cli__tlscreds_commands() {
     _describe -t commands 'wezterm help cli tlscreds commands' commands "$@"
 }
 
-_wezterm "$@"
+if [ "$funcstack[1]" = "_wezterm" ]; then
+    _wezterm "$@"
+else
+    compdef _wezterm wezterm
+fi

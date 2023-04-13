@@ -102,7 +102,7 @@ impl Compose {
             }
             ComposeStatus::Composed => {
                 let res = self.state.keysym();
-                let composed = self.state.utf8().unwrap_or_else(String::new);
+                let composed = self.state.utf8().unwrap_or_default();
                 self.state.reset();
                 FeedResult::Composed(composed, res.unwrap_or(xsym))
             }
@@ -294,7 +294,7 @@ impl Keyboard {
                 log::trace!("process_key_event: raw key was handled; not processing further");
 
                 if want_repeat {
-                    return Some(WindowKeyEvent::RawKeyEvent(raw_key_event.clone()));
+                    return Some(WindowKeyEvent::RawKeyEvent(raw_key_event));
                 }
                 return None;
             }
@@ -320,10 +320,7 @@ impl Keyboard {
                     }
                     log::trace!(
                         "process_key_event: RawKeyEvent FeedResult::Composed: \
-                                {:?}, {:?}. kc -> {:?}",
-                        utf8,
-                        sym,
-                        kc
+                                {utf8:?}, {sym:?}. kc -> {kc:?}",
                     );
                     events.dispatch(WindowEvent::AdviseDeadKeyStatus(DeadKeyStatus::None));
                     sym
@@ -334,10 +331,7 @@ impl Keyboard {
                     }
                     log::trace!(
                         "process_key_event: RawKeyEvent FeedResult::Nothing: \
-                                {:?}, {:?}. kc -> {:?}",
-                        utf8,
-                        sym,
-                        kc
+                                {utf8:?}, {sym:?}. kc -> {kc:?}"
                     );
                     sym
                 }
@@ -369,7 +363,8 @@ impl Keyboard {
             key_is_down: pressed,
             raw: Some(raw_key_event),
         }
-        .normalize_shift();
+        .normalize_shift()
+        .resurface_positional_modifier_key();
 
         if pressed && want_repeat {
             events.dispatch(WindowEvent::KeyEvent(event.clone()));
@@ -386,6 +381,9 @@ impl Keyboard {
         self.state
             .borrow()
             .mod_name_is_active(modifier, xkb::STATE_MODS_EFFECTIVE)
+    }
+    fn led_is_active(&self, led: &str) -> bool {
+        self.state.borrow().led_name_is_active(led)
     }
 
     pub fn get_key_modifiers(&self) -> Modifiers {
@@ -404,6 +402,12 @@ impl Keyboard {
         if self.mod_is_active(xkb::MOD_NAME_LOGO) {
             // Mod4
             res |= Modifiers::SUPER;
+        }
+        if self.led_is_active(xkb::LED_NAME_NUM) {
+            res |= Modifiers::NUM_LOCK;
+        }
+        if self.led_is_active(xkb::LED_NAME_CAPS) {
+            res |= Modifiers::CAPS_LOCK;
         }
         res
     }

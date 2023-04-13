@@ -9,23 +9,30 @@ use wezterm_term::config::BidiMode;
 #[derive(Debug)]
 pub struct TermConfig {
     config: Mutex<Option<ConfigHandle>>,
+    client_palette: Mutex<Option<ColorPalette>>,
 }
 
 impl TermConfig {
     pub fn new() -> Self {
         Self {
             config: Mutex::new(None),
+            client_palette: Mutex::new(None),
         }
     }
 
     pub fn with_config(config: ConfigHandle) -> Self {
         Self {
             config: Mutex::new(Some(config)),
+            client_palette: Mutex::new(None),
         }
     }
 
     pub fn set_config(&self, config: ConfigHandle) {
         self.config.lock().unwrap().replace(config);
+    }
+
+    pub fn set_client_palette(&self, palette: ColorPalette) {
+        self.client_palette.lock().unwrap().replace(palette);
     }
 
     fn configuration(&self) -> ConfigHandle {
@@ -50,6 +57,10 @@ impl wezterm_term::TerminalConfiguration for TermConfig {
     }
 
     fn color_palette(&self) -> ColorPalette {
+        let client_palette = self.client_palette.lock().unwrap();
+        if let Some(p) = client_palette.as_ref().cloned() {
+            return p;
+        }
         let config = self.configuration();
 
         config.resolved_palette.clone().into()
@@ -99,6 +110,10 @@ impl wezterm_term::TerminalConfiguration for TermConfig {
 
     fn debug_key_events(&self) -> bool {
         self.configuration().debug_key_events
+    }
+
+    fn log_unknown_escape_sequences(&self) -> bool {
+        self.configuration().log_unknown_escape_sequences
     }
 
     fn normalize_output_to_unicode_nfc(&self) -> bool {

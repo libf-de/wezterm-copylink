@@ -70,7 +70,7 @@ impl Clone for ParsedFont {
             synthesize_dim: self.synthesize_dim,
             assume_emoji_presentation: self.assume_emoji_presentation,
             handle: self.handle.clone(),
-            cap_height: self.cap_height.clone(),
+            cap_height: self.cap_height,
             coverage: Mutex::new(self.coverage.lock().unwrap().clone()),
             pixel_sizes: self.pixel_sizes.clone(),
             harfbuzz_features: self.harfbuzz_features.clone(),
@@ -552,8 +552,7 @@ impl ParsedFont {
         };
         let style = *styles
             .iter()
-            .filter(|&&style| candidates.iter().any(|&idx| fonts[idx].style == style))
-            .next()?;
+            .find(|&&style| candidates.iter().any(|&idx| fonts[idx].style == style))?;
 
         // Reduce to matching italics
         candidates.retain(|&idx| fonts[idx].style == style);
@@ -717,6 +716,8 @@ pub(crate) fn load_built_in_fonts(font_info: &mut Vec<ParsedFont>) -> anyhow::Re
             font!("../../assets/fonts/JetBrainsMono-MediumItalic.ttf"),
             font!("../../assets/fonts/JetBrainsMono-Medium.ttf"),
             font!("../../assets/fonts/JetBrainsMono-Regular.ttf"),
+            font!("../../assets/fonts/JetBrainsMono-SemiBoldItalic.ttf"),
+            font!("../../assets/fonts/JetBrainsMono-SemiBold.ttf"),
             font!("../../assets/fonts/JetBrainsMono-ThinItalic.ttf"),
             font!("../../assets/fonts/JetBrainsMono-Thin.ttf"),
         ],

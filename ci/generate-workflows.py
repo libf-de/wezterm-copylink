@@ -1,7 +1,47 @@
 #!/usr/bin/env python3
 import os
 import sys
+import glob
 from copy import deepcopy
+
+TRIGGER_PATHS = [
+    "**/*.rs",
+    "**/Cargo.lock",
+    "**/Cargo.toml",
+    "assets/fonts/**/*",
+    "assets/icon/*",
+    "ci/deploy.sh",
+]
+
+TRIGGER_PATHS_APPIMAGE = [
+    "ci/appimage.sh",
+    "ci/appstreamcli",
+    "ci/source-archive.sh",
+]
+
+TRIGGER_PATHS_UNIX = [
+    "assets/open-wezterm-here",
+    "assets/shell-completion/**/*",
+    "assets/shell-integration/**/*",
+    "assets/wezterm-nautilus.py",
+    "assets/wezterm.appdata.xml",
+    "assets/wezterm.desktop",
+    "get-deps",
+    "ci/tag-name.sh",
+    "termwiz/data/wezterm.terminfo",
+]
+
+TRIGGER_PATHS_MAC = [
+    "assets/macos/**/*",
+    "ci/macos-entitlement.plist",
+    "get-deps",
+    "ci/tag-name.sh",
+]
+
+TRIGGER_PATHS_WIN = [
+    "assets/windows/**/*",
+    "ci/windows-installer.iss",
+]
 
 
 def yv(v, depth=0):
@@ -88,12 +128,29 @@ class CacheStep(ActionStep):
         )
 
 
+class CacheRustStep(ActionStep):
+    def __init__(self, name, key):
+        super().__init__(name, action="Swatinem/rust-cache@v2", params={"key": key})
+
+
 class CheckoutStep(ActionStep):
     def __init__(self, name="checkout repo", submodules=True):
         params = {}
         if submodules:
             params["submodules"] = "recursive"
         super().__init__(name, action="actions/checkout@v3", params=params)
+
+
+class InstallCrateStep(ActionStep):
+    def __init__(self, crate: str, key: str, version=None):
+        params = {"crate": crate, "cache-key": key}
+        if version is not None:
+            params["version"] = version
+        super().__init__(
+            f"Install {crate} from Cargo",
+            action="baptiste0928/cargo-install@v2",
+            params=params,
+        )
 
 
 class Job(object):
@@ -285,25 +342,41 @@ ln -s /usr/local/git/bin/git /usr/local/bin/git""",
 
         return steps
 
-    def install_rust(self, cache=True):
+    def install_rust(self, cache=True, toolchain="stable"):
         salt = "2"
-        key_prefix = f"{self.name}-{self.rust_target}-{salt}-${{{{ runner.os }}}}-${{{{ hashFiles('**/Cargo.lock') }}}}"
-        params = {
-            "profile": "minimal",
-            "toolchain": "stable",
-            "override": True,
-            "components": "rustfmt",
-        }
+        key_prefix = f"{self.name}-{self.rust_target}-{salt}-${{{{ runner.os }}}}"
+        params = dict()
         if self.rust_target:
             params["target"] = self.rust_target
-        steps = [
-            ActionStep(
-                name="Install Rust",
-                action="actions-rs/toolchain@v1",
-                params=params,
-                env={"ACTIONS_ALLOW_UNSECURE_COMMANDS": "true"},
-            ),
-        ]
+        steps = []
+        # Manually setup rust toolchain in CentOS7 curl is too old for the action
+        if "centos7" in self.name:
+            steps += [
+                RunStep(
+                    name="Install Rustup",
+                    run="""
+if ! command -v rustup &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 --retry 10 -fsSL "https://sh.rustup.rs" | sh -s -- --default-toolchain none -y
+  echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> $GITHUB_PATH
+fi
+""",
+                ),
+                RunStep(
+                    name="Setup Toolchain",
+                    run=f"""
+rustup toolchain install {toolchain} --profile minimal --no-self-update
+rustup default {toolchain}
+""",
+                ),
+            ]
+        else:
+            steps += [
+                ActionStep(
+                    name="Install Rust",
+                    action=f"dtolnay/rust-toolchain@{toolchain}",
+                    params=params,
+                ),
+            ]
         if "macos" in self.name:
             steps += [
                 RunStep(
@@ -312,11 +385,9 @@ ln -s /usr/local/git/bin/git /usr/local/bin/git""",
                 )
             ]
         if cache:
-            cache_paths = ["~/.cargo/registry", "~/.cargo/git", "target"]
             steps += [
-                CacheStep(
+                CacheRustStep(
                     name="Cache cargo",
-                    path="\n".join(cache_paths),
                     key=f"{key_prefix}-cargo",
                 ),
             ]
@@ -327,7 +398,10 @@ ln -s /usr/local/git/bin/git /usr/local/bin/git""",
             return []
         sudo = "sudo -n " if self.needs_sudo() else ""
         return [
-            RunStep(name="Install System Deps", run=f"{sudo}env PATH=$PATH ./get-deps")
+            RunStep(
+                name="Install System Deps",
+                run=f"{sudo}env CI=yes PATH=$PATH ./get-deps",
+            )
         ]
 
     def build_all_release(self):
@@ -363,21 +437,19 @@ cargo build --all --release""",
         ]
 
     def test_all_release(self):
+        run = "cargo nextest run --all --release --no-fail-fast"
         if "macos" in self.name:
-            return [
-                RunStep(
-                    name="Test (Release mode)",
-                    run="cargo test --target x86_64-apple-darwin --all --release",
-                )
-            ]
+            run += " --target=x86_64-apple-darwin"
         if self.name == "centos7":
-            enable = "source /opt/rh/devtoolset-9/enable && "
-        else:
-            enable = ""
+            run = "source /opt/rh/devtoolset-9/enable\n" + run
         return [
+            # Install cargo-nextest
+            InstallCrateStep("cargo-nextest", key=self.name),
+            # Run tests
             RunStep(
-                name="Test (Release mode)", run=enable + "cargo test --all --release"
-            )
+                name="Test (Release mode)",
+                run=run,
+            ),
         ]
 
     def package(self, trusted=False):
@@ -393,6 +465,8 @@ cargo build --all --release""",
             }
         steps = [RunStep("Package", "bash ci/deploy.sh", env=deploy_env)]
         if self.app_image:
+            # AppImage needs fuse
+            steps += self.install_system_package("libfuse2")
             steps.append(RunStep("Source Tarball", "bash ci/source-archive.sh"))
             steps.append(RunStep("Build AppImage", "bash ci/appimage.sh"))
         return steps
@@ -560,6 +634,32 @@ cargo build --all --release""",
                 f"bash ci/retry.sh gh release upload --clobber $(ci/tag-name.sh) {glob}",
                 env={
                     "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
+                },
+            ),
+        ]
+
+    def create_flathub_pr(self):
+        if not self.app_image:
+            return []
+        return [
+            ActionStep(
+                "Checkout flathub/org.wezfurlong.wezterm",
+                action="actions/checkout@v3",
+                params={
+                    "repository": "flathub/org.wezfurlong.wezterm",
+                    "path": "flathub",
+                    "token": "${{ secrets.GH_PAT }}",
+                },
+            ),
+            RunStep(
+                "Create flathub commit and push",
+                "bash ci/make-flathub-pr.sh",
+            ),
+            RunStep(
+                "Submit PR",
+                'cd flathub && gh pr create --fill --body "PR automatically created by release automation in the wezterm repo"',
+                env={
+                    "GITHUB_TOKEN": "${{ secrets.GH_PAT }}",
                 },
             ),
         ]
@@ -810,7 +910,8 @@ cargo build --all --release""",
             runs_on="ubuntu-latest",
             steps=self.checkout(submodules=False)
             + self.upload_asset_tag()
-            + self.create_winget_pr(),
+            + self.create_winget_pr()
+            + self.create_flathub_pr(),
         )
 
         return (
@@ -840,15 +941,11 @@ TARGETS = [
     Target(name="centos9", container="quay.io/centos/centos:stream9"),
     Target(name="macos", os="macos-11"),
     # https://fedoraproject.org/wiki/End_of_life?rd=LifeCycle/EOL
-    Target(container="fedora:34"),
     Target(container="fedora:35"),
     Target(container="fedora:36"),
     Target(container="fedora:37"),
-    Target(container="alpine:3.12"),
-    Target(container="alpine:3.13"),
-    Target(container="alpine:3.14"),
     Target(container="alpine:3.15"),
-    Target(name="opensuse_leap", container="registry.opensuse.org/opensuse/leap:15.3"),
+    Target(name="opensuse_leap", container="registry.opensuse.org/opensuse/leap:15.4"),
     Target(
         name="opensuse_tumbleweed",
         container="registry.opensuse.org/opensuse/tumbleweed",
@@ -873,14 +970,32 @@ def generate_actions(namer, jobber, trigger, is_continuous, is_tag=False):
 
         file_name = f".github/workflows/gen_{name}.yml"
         if job.container:
-            container = f"container: {yv(job.container)}"
+            if t.app_image:
+                container = f"container:\n      image: {yv(job.container)}\n      options: --privileged"
+            else:
+                container = f"container: {yv(job.container)}"
+
         else:
             container = ""
+
+        trigger_paths = [file_name]
+        trigger_paths += TRIGGER_PATHS
+        if "win" in name:
+            trigger_paths += TRIGGER_PATHS_WIN
+        elif "macos" in name:
+            trigger_paths += TRIGGER_PATHS_MAC
+        else:
+            trigger_paths += TRIGGER_PATHS_UNIX
+        if t.app_image:
+            trigger_paths += TRIGGER_PATHS_APPIMAGE
+
+        trigger_paths = "- " + "\n      - ".join(yv(p) for p in sorted(trigger_paths))
+        trigger_with_paths = trigger.replace("@PATHS@", trigger_paths)
 
         with open(file_name, "w") as f:
             f.write(
                 f"""name: {name}
-{trigger}
+{trigger_with_paths}
 jobs:
   build:
     runs-on: {yv(job.runs_on)}
@@ -925,18 +1040,8 @@ on:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - ".cirrus.yml"
-      - "docs/*"
-      - "ci/build-docs.sh"
-      - "ci/generate-docs.py"
-      - "ci/subst-release-info.py"
-      - ".github/workflows/pages.yml"
-      - ".github/workflows/verify-pages.yml"
-      - ".github/workflows/no-response.yml"
-      - ".github/ISSUE_TEMPLATE/*"
-      - "**/*.md"
-      - "**/*.markdown"
+    paths:
+      @PATHS@
 """,
         is_continuous=False,
     )
@@ -953,18 +1058,8 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - ".cirrus.yml"
-      - "docs/**"
-      - "ci/build-docs.sh"
-      - "ci/generate-docs.py"
-      - "ci/subst-release-info.py"
-      - ".github/workflows/pages.yml"
-      - ".github/workflows/verify-pages.yml"
-      - ".github/workflows/no-response.yml"
-      - ".github/ISSUE_TEMPLATE/*"
-      - "**/*.md"
-      - "**/*.markdown"
+    paths:
+      @PATHS@
 """,
         is_continuous=True,
     )
@@ -985,6 +1080,12 @@ on:
     )
 
 
+def remove_gen_actions():
+    for name in glob.glob(".github/workflows/gen_*.yml"):
+        os.remove(name)
+
+
+remove_gen_actions()
 generate_pr_actions()
 continuous_actions()
 tag_actions()

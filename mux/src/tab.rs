@@ -1,7 +1,7 @@
 use crate::domain::DomainId;
 use crate::pane::*;
 use crate::renderable::StableCursorPosition;
-use crate::{Mux, WindowId};
+use crate::{Mux, MuxNotification, WindowId};
 use bintree::PathBranch;
 use config::configuration;
 use config::keyassignment::PaneDirection;
@@ -277,6 +277,7 @@ fn pane_tree(
                 physical_top: dims.physical_top,
                 left_col,
                 top_row,
+                tty_name: pane.tty_name(),
             })
         }
     }
@@ -521,7 +522,15 @@ impl Tab {
 
     pub fn set_title(&self, title: &str) {
         let mut inner = self.inner.lock();
-        inner.title = title.to_string();
+        if inner.title != title {
+            inner.title = title.to_string();
+            Mux::try_get().map(|mux| {
+                mux.notify(MuxNotification::TabTitleChanged {
+                    tab_id: inner.id,
+                    title: title.to_string(),
+                })
+            });
+        }
     }
 
     /// Called by the multiplexer client when building a local tab to
@@ -547,8 +556,8 @@ impl Tab {
     }
 
     /// Returns a count of how many panes are in this tab
-    pub fn count_panes(&self) -> usize {
-        self.inner.lock().count_panes()
+    pub fn count_panes(&self) -> Option<usize> {
+        self.inner.try_lock().map(|mut inner| inner.count_panes())
     }
 
     /// Sets the zoom state, returns the prior state
@@ -643,6 +652,14 @@ impl Tab {
     /// edge intersection.
     pub fn activate_pane_direction(&self, direction: PaneDirection) {
         self.inner.lock().activate_pane_direction(direction)
+    }
+
+    /// Returns an adjacent pane in the specified direction.
+    /// In cases where there are multiple adjacent panes in the
+    /// intended direction, we take the pane that has the largest
+    /// edge intersection.
+    pub fn get_pane_direction(&self, direction: PaneDirection, ignore_zoom: bool) -> Option<usize> {
+        self.inner.lock().get_pane_direction(direction, ignore_zoom)
     }
 
     pub fn prune_dead_panes(&self) -> bool {
@@ -885,6 +902,7 @@ impl TabInner {
                 self.zoomed.replace(pane);
             }
         }
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
     fn contains_pane(&self, pane: PaneId) -> bool {
@@ -973,6 +991,7 @@ impl TabInner {
                 }
             }
         }
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
     fn iter_panes_impl(&mut self, respect_zoom_state: bool) -> Vec<PositionedPane> {
@@ -998,6 +1017,7 @@ impl TabInner {
         }
 
         let active_idx = self.active;
+        let zoomed_id = self.zoomed.as_ref().map(|p| p.pane_id());
         let root_size = self.size;
         let mut cursor = self.pane.take().unwrap().cursor();
 
@@ -1029,7 +1049,7 @@ impl TabInner {
                 panes.push(PositionedPane {
                     index,
                     is_active: index == active_idx,
-                    is_zoomed: false,
+                    is_zoomed: zoomed_id == Some(pane.pane_id()),
                     left,
                     top,
                     width: dims.cols as _,
@@ -1135,25 +1155,25 @@ impl TabInner {
                 dpi: dims.dpi,
             };
 
-            if size != current_size {
-                // Update the split nodes with adjusted sizes
-                adjust_x_size(
-                    self.pane.as_mut().unwrap(),
-                    cols as isize - current_size.cols as isize,
-                    &dims,
-                );
-                adjust_y_size(
-                    self.pane.as_mut().unwrap(),
-                    rows as isize - current_size.rows as isize,
-                    &dims,
-                );
+            // Update the split nodes with adjusted sizes
+            adjust_x_size(
+                self.pane.as_mut().unwrap(),
+                cols as isize - current_size.cols as isize,
+                &dims,
+            );
+            adjust_y_size(
+                self.pane.as_mut().unwrap(),
+                rows as isize - current_size.rows as isize,
+                &dims,
+            );
 
-                self.size = size;
+            self.size = size;
 
-                // And then resize the individual panes to match
-                apply_sizes_from_splits(self.pane.as_mut().unwrap(), &size);
-            }
+            // And then resize the individual panes to match
+            apply_sizes_from_splits(self.pane.as_mut().unwrap(), &size);
         }
+
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
     fn apply_pane_size(&mut self, pane_size: TerminalSize, cursor: &mut Cursor) {
@@ -1196,8 +1216,8 @@ impl TabInner {
                     let size = TerminalSize {
                         cols: dims.cols,
                         rows: dims.viewport_rows,
-                        pixel_height: 0,
-                        pixel_width: 0,
+                        pixel_height: dims.pixel_height,
+                        pixel_width: dims.pixel_width,
                         dpi: dims.dpi,
                     };
                     Some(size)
@@ -1223,6 +1243,7 @@ impl TabInner {
                 self.size = size;
             }
         }
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
     fn resize_split_by(&mut self, split_index: usize, delta: isize) {
@@ -1255,6 +1276,7 @@ impl TabInner {
         // Now cursor is looking at the split
         self.adjust_node_at_cursor(&mut cursor, delta);
         self.cascade_size_from_cursor(cursor);
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
     fn adjust_node_at_cursor(&mut self, cursor: &mut Cursor, delta: isize) {
@@ -1337,6 +1359,7 @@ impl TabInner {
                 }
             }
         }
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
     fn adjust_pane_size(&mut self, direction: PaneDirection, amount: usize) {
@@ -1408,34 +1431,46 @@ impl TabInner {
             }
             self.toggle_zoom();
         }
-        let panes = self.iter_panes();
+        if let Some(panel_idx) = self.get_pane_direction(direction, false) {
+            self.set_active_idx(panel_idx);
+        }
+        let mux = Mux::get();
+        if let Some(window_id) = mux.window_containing_tab(self.id) {
+            mux.notify(MuxNotification::WindowInvalidated(window_id));
+        }
+    }
+
+    fn get_pane_direction(&mut self, direction: PaneDirection, ignore_zoom: bool) -> Option<usize> {
+        let panes = if ignore_zoom {
+            self.iter_panes_ignoring_zoom()
+        } else {
+            self.iter_panes()
+        };
 
         let active = match panes.iter().find(|pane| pane.is_active) {
             Some(p) => p,
             None => {
                 // No active pane somehow...
-                self.set_active_idx(0);
-                return;
+                return Some(0);
             }
         };
 
         if matches!(direction, PaneDirection::Next | PaneDirection::Prev) {
             let max_pane_id = panes.iter().map(|p| p.index).max().unwrap_or(active.index);
 
-            if direction == PaneDirection::Next {
-                self.set_active_idx(if active.index == max_pane_id {
+            return Some(if direction == PaneDirection::Next {
+                if active.index == max_pane_id {
                     0
                 } else {
                     active.index + 1
-                });
+                }
             } else {
-                self.set_active_idx(if active.index == 0 {
+                if active.index == 0 {
                     max_pane_id
                 } else {
                     active.index - 1
-                });
-            }
-            return;
+                }
+            });
         }
 
         let mut best = None;
@@ -1506,8 +1541,9 @@ impl TabInner {
         drop(recency);
 
         if let Some((_, target)) = best.take() {
-            self.set_active_idx(target.index);
+            return Some(target.index);
         }
+        None
     }
 
     fn prune_dead_panes(&mut self) -> bool {
@@ -1696,14 +1732,17 @@ impl TabInner {
     }
 
     fn advise_focus_change(&mut self, prior: Option<Arc<dyn Pane>>) {
+        let mux = Mux::get();
         let current = self.get_active_pane();
         match (prior, current) {
             (Some(prior), Some(current)) if prior.pane_id() != current.pane_id() => {
                 prior.focus_changed(false);
                 current.focus_changed(true);
+                mux.notify(MuxNotification::PaneFocused(current.pane_id()));
             }
             (None, Some(current)) => {
                 current.focus_changed(true);
+                mux.notify(MuxNotification::PaneFocused(current.pane_id()));
             }
             (Some(prior), None) => {
                 prior.focus_changed(false);
@@ -2072,6 +2111,7 @@ pub struct PaneEntry {
     pub physical_top: StableRowIndex,
     pub top_row: usize,
     pub left_col: usize,
+    pub tty_name: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Serialize, PartialEq, Debug)]

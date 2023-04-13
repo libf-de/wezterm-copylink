@@ -139,7 +139,12 @@ where
                 .await?;
                 stream.flush().await.context("flushing PDU to client")?;
             }
-            Ok(Item::Notif(MuxNotification::TabAddedToWindow { .. })) => {}
+            Ok(Item::Notif(MuxNotification::TabAddedToWindow { tab_id, window_id })) => {
+                Pdu::TabAddedToWindow(codec::TabAddedToWindow { tab_id, window_id })
+                    .encode_async(&mut stream, 0)
+                    .await?;
+                stream.flush().await.context("flushing PDU to client")?;
+            }
             Ok(Item::Notif(MuxNotification::WindowRemoved(_window_id))) => {}
             Ok(Item::Notif(MuxNotification::WindowCreated(_window_id))) => {}
             Ok(Item::Notif(MuxNotification::WindowInvalidated(_window_id))) => {}
@@ -158,6 +163,42 @@ where
                     .await?;
                     stream.flush().await.context("flushing PDU to client")?;
                 }
+            }
+            Ok(Item::Notif(MuxNotification::PaneFocused(pane_id))) => {
+                Pdu::PaneFocused(codec::PaneFocused { pane_id })
+                    .encode_async(&mut stream, 0)
+                    .await?;
+                stream.flush().await.context("flushing PDU to client")?;
+            }
+            Ok(Item::Notif(MuxNotification::TabResized(tab_id))) => {
+                Pdu::TabResized(codec::TabResized { tab_id })
+                    .encode_async(&mut stream, 0)
+                    .await?;
+                stream.flush().await.context("flushing PDU to client")?;
+            }
+            Ok(Item::Notif(MuxNotification::TabTitleChanged { tab_id, title })) => {
+                Pdu::TabTitleChanged(codec::TabTitleChanged { tab_id, title })
+                    .encode_async(&mut stream, 0)
+                    .await?;
+                stream.flush().await.context("flushing PDU to client")?;
+            }
+            Ok(Item::Notif(MuxNotification::WindowTitleChanged { window_id, title })) => {
+                Pdu::WindowTitleChanged(codec::WindowTitleChanged { window_id, title })
+                    .encode_async(&mut stream, 0)
+                    .await?;
+                stream.flush().await.context("flushing PDU to client")?;
+            }
+            Ok(Item::Notif(MuxNotification::WorkspaceRenamed {
+                old_workspace,
+                new_workspace,
+            })) => {
+                Pdu::RenameWorkspace(codec::RenameWorkspace {
+                    old_workspace,
+                    new_workspace,
+                })
+                .encode_async(&mut stream, 0)
+                .await?;
+                stream.flush().await.context("flushing PDU to client")?;
             }
             Ok(Item::Notif(MuxNotification::ActiveWorkspaceChanged(_))) => {}
             Ok(Item::Notif(MuxNotification::Empty)) => {}

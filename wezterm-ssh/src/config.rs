@@ -238,10 +238,7 @@ impl ParsedConfigFile {
                 continue;
             }
 
-            if let Some(sep) = line
-                .find('=')
-                .or_else(|| line.find(|c: char| c.is_whitespace()))
-            {
+            if let Some(sep) = line.find(|c: char| c == '=' || c.is_whitespace()) {
                 let (k, v) = line.split_at(sep);
                 let k = k.trim().to_lowercase();
                 let v = v[1..].trim();
@@ -477,6 +474,19 @@ impl Config {
         }
     }
 
+    fn resolve_local_host(&self, include_domain_name: bool) -> String {
+        let hostname = gethostname::gethostname().to_string_lossy().to_string();
+
+        if include_domain_name {
+            hostname
+        } else {
+            match hostname.split_once('.') {
+                Some((hostname, _domain)) => hostname.to_string(),
+                None => hostname,
+            }
+        }
+    }
+
     fn resolve_local_user(&self) -> String {
         for user in &["USER", "USERNAME"] {
             if let Some(user) = self.resolve_env(user) {
@@ -523,6 +533,15 @@ impl Config {
 
         let mut token_map = self.tokens.clone();
         token_map.insert("%h".to_string(), host.to_string());
+        token_map.insert("%n".to_string(), host.to_string());
+        token_map.insert("%r".to_string(), target_user.to_string());
+        token_map.insert(
+            "%p".to_string(),
+            result
+                .get("port")
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "22".to_string()),
+        );
 
         for (k, v) in &mut result {
             if let Some(tokens) = self.should_expand_tokens(k) {
@@ -621,11 +640,16 @@ impl Config {
 
     /// Perform token substitution
     fn expand_tokens(&self, value: &mut String, tokens: &[&str], token_map: &ConfigMap) {
+        let orig_value = value.to_string();
         for &t in tokens {
             if let Some(v) = token_map.get(t) {
                 *value = value.replace(t, v);
             } else if t == "%u" {
                 *value = value.replace(t, &self.resolve_local_user());
+            } else if t == "%l" {
+                *value = value.replace(t, &self.resolve_local_host(false));
+            } else if t == "%L" {
+                *value = value.replace(t, &self.resolve_local_host(true));
             } else if t == "%d" {
                 if let Some(home) = self.resolve_home() {
                     let mut items = value
@@ -641,6 +665,8 @@ impl Config {
                     }
                     *value = items.join(" ");
                 }
+            } else if value.contains(t) {
+                log::warn!("Unsupported token {t} when evaluating `{orig_value}`");
             }
         }
 
@@ -718,6 +744,85 @@ impl Config {
 mod test {
     use super::*;
     use k9::snapshot;
+
+    #[test]
+    fn parse_proxy_command_tokens() {
+        let mut config = Config::new();
+        config.add_config_string(
+            r#"
+        Host foo
+            ProxyCommand /usr/bin/corp-ssh-helper -dst_username=%r %h %p
+            Port 2222
+            "#,
+        );
+        let mut fake_env = ConfigMap::new();
+        fake_env.insert("HOME".to_string(), "/home/me".to_string());
+        fake_env.insert("USER".to_string(), "me".to_string());
+        config.assign_environment(fake_env);
+
+        let opts = config.for_host("foo");
+        snapshot!(
+            opts,
+            r#"
+{
+    "hostname": "foo",
+    "identityfile": "/home/me/.ssh/id_dsa /home/me/.ssh/id_ecdsa /home/me/.ssh/id_ed25519 /home/me/.ssh/id_rsa",
+    "port": "2222",
+    "proxycommand": "/usr/bin/corp-ssh-helper -dst_username=me foo 2222",
+    "user": "me",
+    "userknownhostsfile": "/home/me/.ssh/known_hosts /home/me/.ssh/known_hosts2",
+}
+"#
+        );
+    }
+
+    #[test]
+    fn parse_proxy_command() {
+        let mut config = Config::new();
+        config.add_config_string(
+            r#"
+        Host foo
+            ProxyCommand /usr/bin/ssh-proxy-helper -oX=Y host 22
+            "#,
+        );
+
+        snapshot!(
+            &config,
+            r#"
+Config {
+    config_files: [
+        ParsedConfigFile {
+            options: {},
+            groups: [
+                MatchGroup {
+                    criteria: [
+                        Host(
+                            [
+                                Pattern {
+                                    negated: false,
+                                    pattern: "^foo$",
+                                    original: "foo",
+                                    is_literal: true,
+                                },
+                            ],
+                        ),
+                    ],
+                    context: FirstPass,
+                    options: {
+                        "proxycommand": "/usr/bin/ssh-proxy-helper -oX=Y host 22",
+                    },
+                },
+            ],
+            loaded_files: [],
+        },
+    ],
+    options: {},
+    tokens: {},
+    environment: None,
+}
+"#
+        );
+    }
 
     #[test]
     fn parse_user() {

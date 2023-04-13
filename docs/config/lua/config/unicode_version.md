@@ -1,6 +1,10 @@
+---
+tags:
+  - unicode
+---
 # `unicode_version = 9`
 
-*Since: 20211204-082213-a66c61ee9*
+{{since('20211204-082213-a66c61ee9')}}
 
 Specifies the version of unicode that will be used when interpreting the
 width/presentation of text.

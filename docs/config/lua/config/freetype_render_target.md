@@ -1,6 +1,10 @@
+---
+tags:
+  - font
+---
 # `freetype_render_target = "Normal"`
 
-*Since: 20210502-130208-bff6815d*
+{{since('20210502-130208-bff6815d')}}
 
 Configures the *rendering* mode used with the freetype rasterizer.
 
@@ -13,9 +17,7 @@ For example, this configuration uses light hinting but produces
 subpixel-antialiased glyph bitmaps:
 
 ```lua
-return {
-  freetype_load_target = 'Light',
-  freetype_render_target = 'HorizontalLcd',
-}
+config.freetype_load_target = 'Light'
+config.freetype_render_target = 'HorizontalLcd'
 ```
 

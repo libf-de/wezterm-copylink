@@ -1,6 +1,6 @@
-# `ShowDebugOverlay`
+# ``ShowDebugOverlay``
 
-*Since: 20210814-124438-54e29167*
+{{since('20210814-124438-54e29167')}}
 
 Overlays the current tab with the debug overlay, which is a combination
 of a debug log and a lua [REPL](https://en.wikipedia.org/wiki/Read%E2%80%93eval%E2%80%93print_loop).
@@ -15,12 +15,8 @@ to dynamically assign event handlers for example.  It is primarily useful for
 prototyping lua snippets before you integrate them fully into your config.
 
 ```lua
-local wezterm = require 'wezterm'
-
-return {
-  keys = {
-    -- CTRL-SHIFT-l activates the debug overlay
-    { key = 'L', mods = 'CTRL', action = wezterm.action.ShowDebugOverlay },
-  },
+config.keys = {
+  -- CTRL-SHIFT-l activates the debug overlay
+  { key = 'L', mods = 'CTRL', action = wezterm.action.ShowDebugOverlay },
 }
 ```

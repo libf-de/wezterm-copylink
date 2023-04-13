@@ -638,7 +638,8 @@ impl XWindowInner {
             key_is_down: true,
             raw: None,
         }
-        .normalize_shift();
+        .normalize_shift()
+        .resurface_positional_modifier_key();
         self.events.dispatch(WindowEvent::KeyEvent(key_event));
     }
 
@@ -951,7 +952,10 @@ impl XWindowInner {
 
         let decorations = if decorations == WindowDecorations::TITLE | WindowDecorations::RESIZE {
             FUNC_ALL
-        } else if decorations == WindowDecorations::RESIZE {
+        } else if decorations == WindowDecorations::RESIZE
+            || decorations == WindowDecorations::INTEGRATED_BUTTONS
+            || decorations == WindowDecorations::INTEGRATED_BUTTONS | WindowDecorations::RESIZE
+        {
             FUNC_RESIZE
         } else if decorations == WindowDecorations::TITLE {
             FUNC_MOVE | FUNC_MINIMIZE | FUNC_MAXIMIZE | FUNC_CLOSE

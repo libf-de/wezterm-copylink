@@ -1,6 +1,10 @@
-# `normalize_to_nfc = false`
+---
+tags:
+  - unicode
+---
+# `normalize_output_to_unicode_nfc = false`
 
-*Since: 20221119-145034-49b9839f*
+{{since('20221119-145034-49b9839f')}}
 
 When set to true, contiguous runs codepoints output to the terminal
 are [normalized](http://www.unicode.org/faq/normalization.html) to [Unicode

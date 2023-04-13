@@ -1,13 +1,24 @@
 #!/bin/bash
 
+SERVE=no
+if [ "$1" == "serve" ] ; then
+  SERVE=yes
+fi
+
+for util in gelatyx ; do
+  if ! hash $util 2>/dev/null ; then
+    cargo install $util --locked
+  fi
+done
+
 tracked_markdown=$(mktemp)
 trap "rm ${tracked_markdown}" "EXIT"
-git ls-tree -r HEAD --name-only docs | egrep '\.(markdown|md)$' > $tracked_markdown
+find docs -type f | egrep '\.(markdown|md)$' > $tracked_markdown
 
 gelatyx --language lua --file-list $tracked_markdown --language-config ci/stylua.toml
 gelatyx --language lua --file-list $tracked_markdown --language-config ci/stylua.toml --check || exit 1
 
-set -x
+set -ex
 
 # Use the GH CLI to make an authenticated request if available,
 # otherwise just do an ad-hoc curl.
@@ -26,10 +37,29 @@ function ghapi() {
 [[ -f /tmp/wezterm.nightly.json ]] || ghapi /repos/wez/wezterm/releases/tags/nightly > /tmp/wezterm.nightly.json
 python3 ci/subst-release-info.py || exit 1
 python3 ci/generate-docs.py || exit 1
-mdbook-mermaid install docs
-mdbook build docs
 
-rm gh_pages/html/README.markdown
-cp assets/fonts/Symbols-Nerd-Font-Mono.ttf gh_pages/html/fonts/
-cp assets/icon/terminal.png gh_pages/html/favicon.png
-cp "assets/icon/wezterm-icon.svg" gh_pages/html/favicon.svg
+# Adjust path to pick up pip-installed binaries
+PATH="$HOME/.local/bin;$PATH"
+
+PIP=pip3
+if ! hash pip3 >/dev/null ; then
+  PIP=pip
+fi
+
+$PIP install --quiet mkdocs-material mkdocs-git-revision-date-localized-plugin black mkdocs-exclude mkdocs-include-markdown-plugin mkdocs-macros-plugin
+if test -n "${CARDS}" ; then
+  $PIP install --quiet pillow cairosvg
+fi
+
+black ci/generate-docs.py ci/subst-release-info.py
+
+cp "assets/icon/terminal.png" docs/favicon.png
+cp "assets/icon/wezterm-icon.svg" docs/favicon.svg
+mkdir -p docs/fonts
+cp assets/fonts/Symbols-Nerd-Font-Mono.ttf docs/fonts/
+
+if [ "$SERVE" == "yes" ] ; then
+  mkdocs "$@"
+else
+  mkdocs build
+fi

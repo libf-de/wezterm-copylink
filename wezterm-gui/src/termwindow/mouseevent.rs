@@ -1,17 +1,21 @@
 use crate::tabbar::TabBarItem;
 use crate::termwindow::keyevent::window_mods_to_termwiz_mods;
-use crate::termwindow::{MouseCapture, PositionedSplit, ScrollHit, UIItem, UIItemType, TMB};
+use crate::termwindow::{
+    GuiWin, MouseCapture, PositionedSplit, ScrollHit, TermWindowNotif, UIItem, UIItemType, TMB,
+};
 use ::window::{
     MouseButtons as WMB, MouseCursor, MouseEvent, MouseEventKind as WMEK, MousePress, WindowOps,
     WindowState,
 };
-use config::keyassignment::{MouseEventTrigger, SpawnTabDomain};
+use config::keyassignment::{KeyAssignment, MouseEventTrigger, SpawnTabDomain};
 use config::MouseEventAltScreen;
 use mux::pane::{Pane, WithPaneLines};
 use mux::tab::SplitDirection;
 use mux::Mux;
+use mux_lua::MuxPane;
 use std::convert::TryInto;
 use std::ops::Sub;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use termwiz::hyperlink::Hyperlink;
@@ -55,12 +59,14 @@ impl super::TermWindow {
         }
     }
 
-    pub fn mouse_event_impl(&mut self, event: MouseEvent, context: &dyn WindowOps) {
+    pub fn mouse_event_impl(&mut self, mut event: MouseEvent, context: &dyn WindowOps) {
         log::trace!("{:?}", event);
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
             None => return,
         };
+
+        event.modifiers = event.modifiers.remove_keyboard_status_mods();
 
         self.current_mouse_event.replace(event.clone());
 
@@ -191,9 +197,11 @@ impl super::TermWindow {
 
             match (self.last_ui_item.take(), &ui_item) {
                 (Some(prior), Some(item)) => {
-                    self.leave_ui_item(&prior);
-                    self.enter_ui_item(item);
-                    context.invalidate();
+                    if prior != *item || !self.config.use_fancy_tab_bar {
+                        self.leave_ui_item(&prior);
+                        self.enter_ui_item(item);
+                        context.invalidate();
+                    }
                 }
                 (Some(prior), None) => {
                     self.leave_ui_item(&prior);
@@ -396,6 +404,58 @@ impl super::TermWindow {
         context.set_cursor(Some(MouseCursor::Arrow));
     }
 
+    fn do_new_tab_button_click(&mut self, button: MousePress) {
+        let pane = match self.get_active_pane_or_overlay() {
+            Some(pane) => pane,
+            None => return,
+        };
+        let action = match button {
+            MousePress::Left => Some(KeyAssignment::SpawnTab(SpawnTabDomain::CurrentPaneDomain)),
+            MousePress::Right => Some(KeyAssignment::ShowLauncher),
+            MousePress::Middle => None,
+        };
+
+        async fn dispatch_new_tab_button(
+            lua: Option<Rc<mlua::Lua>>,
+            window: GuiWin,
+            pane: MuxPane,
+            button: MousePress,
+            action: Option<KeyAssignment>,
+        ) -> anyhow::Result<()> {
+            let default_action = match lua {
+                Some(lua) => {
+                    let args = lua.pack_multi((
+                        window.clone(),
+                        pane,
+                        format!("{button:?}"),
+                        action.clone(),
+                    ))?;
+                    config::lua::emit_event(&lua, ("new-tab-button-click".to_string(), args))
+                        .await
+                        .map_err(|e| {
+                            log::error!("while processing new-tab-button-click event: {:#}", e);
+                            e
+                        })?
+                }
+                None => true,
+            };
+            if let (true, Some(assignment)) = (default_action, action) {
+                window.window.notify(TermWindowNotif::PerformAssignment {
+                    pane_id: pane.0,
+                    assignment,
+                    tx: None,
+                });
+            }
+            Ok(())
+        }
+        let window = GuiWin::new(self);
+        let pane = MuxPane(pane.pane_id());
+        promise::spawn::spawn(config::with_lua_config_on_main_thread(move |lua| {
+            dispatch_new_tab_button(lua, window, pane, button, action)
+        }))
+        .detach();
+    }
+
     pub fn mouse_event_tab_bar(
         &mut self,
         item: TabBarItem,
@@ -408,7 +468,7 @@ impl super::TermWindow {
                     self.activate_tab(tab_idx as isize).ok();
                 }
                 TabBarItem::NewTabButton { .. } => {
-                    self.spawn_tab(&SpawnTabDomain::CurrentPaneDomain);
+                    self.do_new_tab_button_click(MousePress::Left);
                 }
                 TabBarItem::None | TabBarItem::LeftStatus | TabBarItem::RightStatus => {
                     // Potentially starting a drag by the tab bar
@@ -420,34 +480,66 @@ impl super::TermWindow {
                     }
                     context.request_drag_move();
                 }
+                TabBarItem::WindowButton(button) => {
+                    use window::IntegratedTitleButton as Button;
+                    if let Some(ref window) = self.window {
+                        match button {
+                            Button::Hide => window.hide(),
+                            Button::Maximize => {
+                                let maximized = self
+                                    .window_state
+                                    .intersects(WindowState::MAXIMIZED | WindowState::FULL_SCREEN);
+                                if maximized {
+                                    window.restore();
+                                } else {
+                                    window.maximize();
+                                }
+                            }
+                            Button::Close => self.close_requested(&window.clone()),
+                        }
+                    }
+                }
             },
             WMEK::Press(MousePress::Middle) => match item {
                 TabBarItem::Tab { tab_idx, .. } => {
                     self.close_specific_tab(tab_idx, true);
                 }
-                TabBarItem::NewTabButton { .. }
-                | TabBarItem::None
+                TabBarItem::NewTabButton { .. } => {
+                    self.do_new_tab_button_click(MousePress::Middle);
+                }
+                TabBarItem::None
                 | TabBarItem::LeftStatus
-                | TabBarItem::RightStatus => {}
+                | TabBarItem::RightStatus
+                | TabBarItem::WindowButton(_) => {}
             },
             WMEK::Press(MousePress::Right) => match item {
                 TabBarItem::Tab { .. } => {
                     self.show_tab_navigator();
                 }
                 TabBarItem::NewTabButton { .. } => {
-                    self.show_launcher();
+                    self.do_new_tab_button_click(MousePress::Right);
                 }
-                TabBarItem::None | TabBarItem::LeftStatus | TabBarItem::RightStatus => {}
+                TabBarItem::None
+                | TabBarItem::LeftStatus
+                | TabBarItem::RightStatus
+                | TabBarItem::WindowButton(_) => {}
             },
             WMEK::Move => match item {
                 TabBarItem::None | TabBarItem::LeftStatus | TabBarItem::RightStatus => {
                     context.set_window_drag_position(event.screen_coords);
                 }
-                TabBarItem::Tab { .. } | TabBarItem::NewTabButton { .. } => {}
+                TabBarItem::WindowButton(window::IntegratedTitleButton::Maximize) => {
+                    context.set_maximize_button_position(event.screen_coords);
+                }
+                TabBarItem::WindowButton(_)
+                | TabBarItem::Tab { .. }
+                | TabBarItem::NewTabButton { .. } => {}
             },
             WMEK::VertWheel(n) => {
-                self.activate_tab_relative(if n < 1 { 1 } else { -1 }, true)
-                    .ok();
+                if self.config.mouse_wheel_scrolls_tabs {
+                    self.activate_tab_relative(if n < 1 { 1 } else { -1 }, true)
+                        .ok();
+                }
             }
             _ => {}
         }

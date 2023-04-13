@@ -33,15 +33,15 @@ bitflags::bitflags! {
     }
 }
 
-impl Into<String> for LauncherFlags {
-    fn into(self) -> String {
-        self.to_string()
+impl From<LauncherFlags> for String {
+    fn from(val: LauncherFlags) -> Self {
+        val.to_string()
     }
 }
 
-impl Into<String> for &LauncherFlags {
-    fn into(self) -> String {
-        self.to_string()
+impl From<&LauncherFlags> for String {
+    fn from(val: &LauncherFlags) -> Self {
+        val.to_string()
     }
 }
 
@@ -224,6 +224,16 @@ impl std::fmt::Display for SpawnCommand {
 }
 
 impl SpawnCommand {
+    pub fn label_for_palette(&self) -> Option<String> {
+        if let Some(label) = &self.label {
+            Some(label.to_string())
+        } else if let Some(args) = &self.args {
+            Some(shlex::join(args.iter().map(|s| s.as_str())))
+        } else {
+            None
+        }
+    }
+
     pub fn from_command_builder(cmd: &CommandBuilder) -> anyhow::Result<Self> {
         let mut args = vec![];
         let mut set_environment_variables = HashMap::new();
@@ -281,7 +291,7 @@ impl PaneDirection {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, FromDynamic, ToDynamic)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, FromDynamic, ToDynamic, Serialize, Deserialize)]
 pub enum ScrollbackEraseMode {
     ScrollbackOnly,
     ScrollbackAndViewport,
@@ -436,6 +446,32 @@ pub struct QuickSelectArguments {
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct PromptInputLine {
+    pub action: Box<KeyAssignment>,
+    /// Descriptive text to show ahead of prompt
+    #[dynamic(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct InputSelectorEntry {
+    pub label: String,
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+pub struct InputSelector {
+    pub action: Box<KeyAssignment>,
+    #[dynamic(default)]
+    pub title: String,
+
+    pub choices: Vec<InputSelectorEntry>,
+
+    #[dynamic(default)]
+    pub fuzzy: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub enum KeyAssignment {
     SpawnTab(SpawnTabDomain),
     SpawnWindow,
@@ -541,6 +577,8 @@ pub enum KeyAssignment {
     ActivateWindow(usize),
     ActivateWindowRelative(isize),
     ActivateWindowRelativeNoWrap(isize),
+    PromptInputLine(PromptInputLine),
+    InputSelector(InputSelector),
 }
 impl_lua_conversion_dynamic!(KeyAssignment);
 

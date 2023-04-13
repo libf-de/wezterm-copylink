@@ -107,14 +107,7 @@ impl TerminalState {
             )
         })?);
 
-        let (image_width, image_height) = match &*img.data() {
-            ImageDataType::EncodedFile(data) => {
-                let decoded = ::image::load_from_memory(data).context("decode png")?;
-                decoded.dimensions()
-            }
-            ImageDataType::AnimRgba8 { width, height, .. }
-            | ImageDataType::Rgba8 { width, height, .. } => (*width, *height),
-        };
+        let (image_width, image_height) = img.data().dimensions()?;
 
         let info = self.assign_image_to_cells(ImageAttachParams {
             image_width,
@@ -450,7 +443,9 @@ impl TerminalState {
 
         let mut img = img.data();
         match &mut *img {
-            ImageDataType::EncodedFile(_) => anyhow::bail!("invalid image type"),
+            ImageDataType::EncodedLease(_) | ImageDataType::EncodedFile(_) => {
+                anyhow::bail!("invalid image type")
+            }
             ImageDataType::Rgba8 {
                 width,
                 height,
@@ -603,7 +598,7 @@ impl TerminalState {
         });
 
         match &mut *anim {
-            ImageDataType::EncodedFile(_) => {
+            ImageDataType::EncodedLease(_) | ImageDataType::EncodedFile(_) => {
                 anyhow::bail!("Expected decoded image for image id {}", image_id)
             }
             ImageDataType::Rgba8 {
@@ -831,7 +826,9 @@ impl TerminalState {
         let (image_id, image_number, img) = self.kitty_img_transmit_inner(transmit)?;
         self.kitty_img.max_image_id = self.kitty_img.max_image_id.max(image_id);
 
-        let img = self.raw_image_to_image_data(img);
+        let img = self
+            .raw_image_to_image_data(img)
+            .context("storing image data")?;
         self.kitty_img.record_id_to_data(image_id, img);
 
         if image_number.is_some() {
@@ -888,11 +885,16 @@ impl TerminalState {
                 }
             }
 
-            let mut b64_encoded = String::new();
-            for data in data.into_iter() {
-                match data {
+            let mut b64_decoded = vec![];
+            for mut data in data.into_iter() {
+                match &mut data {
+                    KittyImageData::DirectBin(b) => {
+                        b64_decoded.append(b);
+                    }
                     KittyImageData::Direct(b) => {
-                        b64_encoded.push_str(&b);
+                        if !b.is_empty() {
+                            b64_decoded.append(&mut data.load_data()?);
+                        }
                     }
                     data => {
                         anyhow::bail!("expected data chunks to be Direct data, found {:#?}", data)
@@ -900,7 +902,7 @@ impl TerminalState {
                 }
             }
 
-            trans.data = KittyImageData::Direct(b64_encoded);
+            trans.data = KittyImageData::DirectBin(b64_decoded);
 
             if let Some(placement) = place {
                 Ok(KittyImage::TransmitDataAndDisplay {

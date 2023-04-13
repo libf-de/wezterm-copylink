@@ -1,6 +1,10 @@
-# foreground_text_hsb
+---
+tags:
+  - appearance
+---
+# `foreground_text_hsb`
 
-*Since: 20210314-114017-04b7cedd*
+{{since('20210314-114017-04b7cedd')}}
 
 Configures a Hue, Saturation, Brightness transformation that is applied to
 monochrome glyphs.
@@ -23,21 +27,15 @@ values, so the default of 1.0 preserves the existing component, whilst 0.5 will
 reduce it by half, and 2.0 will double the value.
 
 ```lua
-return {
-  -- This increases color saturation by 50%
-  foreground_text_hsb = {
-    hue = 1.0,
-    saturation = 1.5,
-    brightness = 1.0,
-  },
+-- This increases color saturation by 50%
+config.foreground_text_hsb = {
+  hue = 1.0,
+  saturation = 1.5,
+  brightness = 1.0,
 }
 ```
 
-<img src="../../../screenshots/foreground-text-hsb-1-1-1.png"
-     alt="demonstrating the appearance of the default value">
-<img src="../../../screenshots/foreground-text-hsb-1-1.5-1.png"
-     alt="demonstrating setting saturating to 1.5">
-<img src="../../../screenshots/foreground-text-hsb-1-1-1.5.png"
-     alt="demonstrating setting brightness to 1.5">
-<img src="../../../screenshots/foreground-text-hsb-1.5-1-1.png"
-     alt="demonstrating setting hue to 1.5">
+![demonstrating the appearance of the default value](../../../screenshots/foreground-text-hsb-1-1-1.png)
+![demonstrating setting saturating to 1.5](../../../screenshots/foreground-text-hsb-1-1.5-1.png)
+![demonstrating setting brightness to 1.5](../../../screenshots/foreground-text-hsb-1-1-1.5.png)
+![demonstrating setting hue to 1.5](../../../screenshots/foreground-text-hsb-1.5-1-1.png)

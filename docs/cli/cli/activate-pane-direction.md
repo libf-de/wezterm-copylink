@@ -1,6 +1,6 @@
 # `wezterm cli activate-pane-direction DIRECTION`
 
-*Since: 20221119-145034-49b9839f*
+{{since('20221119-145034-49b9839f')}}
 
 *Run `wezterm cli activate-pane-direction --help` to see more help*
 
@@ -12,3 +12,8 @@ ignoring case so you can use `left` rather than `Left`:
 * `Left`, `Right`, `Up`, `Down` to activate based on direction
 * `Next`, `Prev` to cycle based on the ordinal position in the pane tree.
 
+## Synopsis
+
+```console
+{% include "../../examples/cmd-synopsis-wezterm-cli-activate-pane-direction--help.txt" %}
+```

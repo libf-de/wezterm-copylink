@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context};
 use clap::builder::ValueParser;
 use clap::{Parser, ValueHint};
 use config::keyassignment::{SpawnCommand, SpawnTabDomain};
-use config::{ConfigHandle, SshDomain, SshMultiplexing};
+use config::{ConfigHandle, SerialDomain, SshDomain, SshMultiplexing};
 use mux::activity::Activity;
 use mux::domain::{Domain, LocalDomain};
 use mux::ssh::RemoteSshDomain;
@@ -70,7 +70,7 @@ pub use termwindow::{set_window_class, set_window_position, TermWindow, ICON_DAT
 )]
 struct Opt {
     /// Skip loading wezterm.lua
-    #[arg(name = "skip-config", short = 'n')]
+    #[arg(long, short = 'n')]
     skip_config: bool,
 
     /// Specify the configuration file to use, overrides the normal
@@ -78,7 +78,7 @@ struct Opt {
     #[arg(
         long = "config-file",
         value_parser,
-        conflicts_with = "skip-config",
+        conflicts_with = "skip_config",
         value_hint=ValueHint::FilePath,
     )]
     config_file: Option<OsString>,
@@ -193,7 +193,35 @@ fn run_ssh(opts: SshCommand) -> anyhow::Result<()> {
     gui.run_forever()
 }
 
-fn run_serial(config: config::ConfigHandle, opts: &SerialCommand) -> anyhow::Result<()> {
+async fn async_run_serial(opts: SerialCommand) -> anyhow::Result<()> {
+    let serial_domain = SerialDomain {
+        name: format!("Serial Port {}", opts.port),
+        port: Some(opts.port.clone()),
+        baud: opts.baud,
+    };
+
+    let start_command = StartCommand {
+        always_new_process: true,
+        class: opts.class,
+        cwd: None,
+        no_auto_connect: true,
+        position: opts.position,
+        workspace: None,
+        domain: Some(serial_domain.name.clone()),
+        ..Default::default()
+    };
+
+    let cmd = None;
+
+    let domain: Arc<dyn Domain> = Arc::new(LocalDomain::new_serial_domain(serial_domain)?);
+    let mux = Mux::get();
+    mux.add_domain(&domain);
+
+    let should_publish = false;
+    async_run_terminal_gui(cmd, start_command, should_publish).await
+}
+
+fn run_serial(config: config::ConfigHandle, opts: SerialCommand) -> anyhow::Result<()> {
     if let Some(cls) = opts.class.as_ref() {
         crate::set_window_class(cls);
     }
@@ -201,26 +229,16 @@ fn run_serial(config: config::ConfigHandle, opts: &SerialCommand) -> anyhow::Res
         set_window_position(pos.clone());
     }
 
-    let mut serial = portable_pty::serial::SerialTty::new(&opts.port);
-    if let Some(baud) = opts.baud {
-        serial.set_baud_rate(serial::BaudRate::from_speed(baud));
-    }
-
-    let pty_system = Box::new(serial);
-    let domain: Arc<dyn Domain> = Arc::new(LocalDomain::with_pty_system("local", pty_system));
-    let mux = setup_mux(domain.clone(), &config, Some("local"), None)?;
+    build_initial_mux(&config, None, None)?;
 
     let gui = crate::frontend::try_new()?;
-    let dpi = config.dpi.unwrap_or_else(|| ::window::default_dpi()) as u32;
-    {
-        let workspace = None;
-        let position = None;
-        let window_id = mux.new_empty_window(workspace, position);
-        block_on(domain.attach(Some(*window_id)))?; // FIXME: blocking
 
-        // FIXME: blocking
-        let _tab = block_on(domain.spawn(config.initial_size(dpi), None, None, *window_id))?;
-    }
+    promise::spawn::spawn(async {
+        if let Err(err) = async_run_serial(opts).await {
+            terminate_with_error(err);
+        }
+    })
+    .detach();
 
     maybe_show_configuration_error_window();
     gui.run_forever()
@@ -232,7 +250,7 @@ fn client_domains(config: &config::ConfigHandle) -> Vec<ClientDomainConfig> {
         domains.push(ClientDomainConfig::Unix(unix_dom.clone()));
     }
 
-    for ssh_dom in &config.ssh_domains {
+    for ssh_dom in config.ssh_domains().into_iter() {
         if ssh_dom.multiplexing == SshMultiplexing::WezTerm {
             domains.push(ClientDomainConfig::Ssh(ssh_dom.clone()));
         }
@@ -244,22 +262,47 @@ fn client_domains(config: &config::ConfigHandle) -> Vec<ClientDomainConfig> {
     domains
 }
 
+fn have_panes_in_domain_and_ws(domain: &Arc<dyn Domain>, workspace: &Option<String>) -> bool {
+    let mux = Mux::get();
+    let have_panes_in_domain = mux
+        .iter_panes()
+        .iter()
+        .any(|p| p.domain_id() == domain.domain_id());
+
+    if !have_panes_in_domain {
+        return false;
+    }
+
+    if let Some(ws) = &workspace {
+        for window_id in mux.iter_windows_in_workspace(ws) {
+            if let Some(win) = mux.get_window(window_id) {
+                for t in win.iter() {
+                    for p in t.iter_panes_ignoring_zoom() {
+                        if p.pane.domain_id() == domain.domain_id() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    } else {
+        true
+    }
+}
+
 async fn spawn_tab_in_domain_if_mux_is_empty(
     cmd: Option<CommandBuilder>,
     is_connecting: bool,
     domain: Option<Arc<dyn Domain>>,
+    workspace: Option<String>,
 ) -> anyhow::Result<()> {
     let mux = Mux::get();
 
     let domain = domain.unwrap_or_else(|| mux.default_domain());
 
     if !is_connecting {
-        let have_panes_in_domain = mux
-            .iter_panes()
-            .iter()
-            .any(|p| p.domain_id() == domain.domain_id());
-
-        if have_panes_in_domain {
+        if have_panes_in_domain_and_ws(&domain, &workspace) {
             return Ok(());
         }
     }
@@ -272,25 +315,20 @@ async fn spawn_tab_in_domain_if_mux_is_empty(
         // from the size specified in the remote mux.
         // We use the TabAddedToWindow mux notification
         // to detect and adjust the size later on.
-        let workspace = None;
         let position = None;
-        let builder = mux.new_empty_window(workspace, position);
+        let builder = mux.new_empty_window(workspace.clone(), position);
         *builder
     };
 
+    let config = config::configuration();
+    config.update_ulimit()?;
+
     domain.attach(Some(window_id)).await?;
 
-    let have_panes_in_domain = mux
-        .iter_panes()
-        .iter()
-        .any(|p| p.domain_id() == domain.domain_id());
-
-    if have_panes_in_domain {
+    if have_panes_in_domain_and_ws(&domain, &workspace) {
         trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
         return Ok(());
     }
-
-    let config = config::configuration();
 
     let _config_subscription = config::subscribe_to_config_reload(move || {
         promise::spawn::spawn_into_main_thread(async move {
@@ -322,7 +360,7 @@ fn update_mux_domains(config: &ConfigHandle) -> anyhow::Result<()> {
         mux.add_domain(&domain);
     }
 
-    for ssh_dom in &config.ssh_domains {
+    for ssh_dom in config.ssh_domains().into_iter() {
         if ssh_dom.multiplexing != SshMultiplexing::None {
             continue;
         }
@@ -335,7 +373,7 @@ fn update_mux_domains(config: &ConfigHandle) -> anyhow::Result<()> {
         mux.add_domain(&domain);
     }
 
-    for wsl_dom in &config.wsl_domains {
+    for wsl_dom in config.wsl_domains() {
         if mux.get_domain_by_name(&wsl_dom.name).is_some() {
             continue;
         }
@@ -350,6 +388,15 @@ fn update_mux_domains(config: &ConfigHandle) -> anyhow::Result<()> {
         }
 
         let domain: Arc<dyn Domain> = Arc::new(LocalDomain::new_exec_domain(exec_dom.clone())?);
+        mux.add_domain(&domain);
+    }
+
+    for serial in &config.serial_ports {
+        if mux.get_domain_by_name(&serial.name).is_some() {
+            continue;
+        }
+
+        let domain: Arc<dyn Domain> = Arc::new(LocalDomain::new_serial_domain(serial.clone())?);
         mux.add_domain(&domain);
     }
 
@@ -492,7 +539,7 @@ async fn async_run_terminal_gui(
             trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
         }
     }
-    spawn_tab_in_domain_if_mux_is_empty(cmd, is_connecting, domain).await
+    spawn_tab_in_domain_if_mux_is_empty(cmd, is_connecting, domain, opts.workspace).await
 }
 
 #[derive(Debug)]
@@ -695,6 +742,9 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
     if let Some(pos) = opts.position.as_ref() {
         set_window_position(pos.clone());
     }
+    wezterm_blob_leases::register_storage(Arc::new(
+        wezterm_blob_leases::simple_tempdir::SimpleTempDir::new()?,
+    ))?;
 
     let config = config::configuration();
     let need_builder = !opts.prog.is_empty() || opts.cwd.is_some();
@@ -785,7 +835,15 @@ fn terminate_with_error_message(err: &str) -> ! {
 }
 
 fn terminate_with_error(err: anyhow::Error) -> ! {
-    terminate_with_error_message(&format!("{:#}", err));
+    let mut err_text = format!("{err:#}");
+
+    let warnings = config::configuration_warnings_and_errors();
+    if !warnings.is_empty() {
+        let err = warnings.join("\n");
+        err_text = format!("{err_text}\nConfiguration Error: {err}");
+    }
+
+    terminate_with_error_message(&err_text)
 }
 
 fn main() {
@@ -1201,10 +1259,12 @@ fn run() -> anyhow::Result<()> {
     match sub {
         SubCommand::Start(start) => {
             log::trace!("Using configuration: {:#?}\nopts: {:#?}", config, opts);
-            run_terminal_gui(start, None)
+            let res = run_terminal_gui(start, None);
+            wezterm_blob_leases::clear_storage();
+            res
         }
         SubCommand::Ssh(ssh) => run_ssh(ssh),
-        SubCommand::Serial(serial) => run_serial(config, &serial),
+        SubCommand::Serial(serial) => run_serial(config, serial),
         SubCommand::Connect(connect) => run_terminal_gui(
             StartCommand {
                 domain: Some(connect.domain_name.clone()),

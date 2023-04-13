@@ -490,7 +490,7 @@ impl RenderableInner {
     }
 
     fn schedule_fetch_lines(&mut self, to_fetch: RangeSet<StableRowIndex>, now: Instant) {
-        if to_fetch.is_empty() {
+        if to_fetch.is_empty() || self.dead {
             return;
         }
 
@@ -666,16 +666,23 @@ pub(crate) async fn hydrate_lines(
     }
 
     for (_, request) in requests {
-        log::trace!("requesting {:?}", request);
-        if let Ok(GetImageCellResponse {
-            data: Some(data), ..
-        }) = client.client.get_image_cell(request).await
-        {
-            IMAGE_LRU
-                .lock()
-                .unwrap()
-                .put(data.hash(), Arc::clone(&data));
-            data_by_hash.insert(data.hash(), data);
+        match client.client.get_image_cell(request).await {
+            Ok(GetImageCellResponse {
+                data: Some(data), ..
+            }) => {
+                IMAGE_LRU
+                    .lock()
+                    .unwrap()
+                    .put(data.hash(), Arc::clone(&data));
+                data_by_hash.insert(data.hash(), data);
+            }
+            Ok(GetImageCellResponse { data: None, .. }) => {
+                log::error!("no image data!");
+            }
+
+            Err(err) => {
+                log::error!("failed to retrieve image {err:#}");
+            }
         }
     }
 

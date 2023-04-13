@@ -16,11 +16,11 @@ use parking_lot::{
 };
 use percent_encoding::percent_decode_str;
 use portable_pty::{CommandBuilder, ExitStatus, PtySize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 use termwiz::escape::csi::{DecPrivateMode, DecPrivateModeCode, Device, Mode};
@@ -77,6 +77,20 @@ pub enum MuxNotification {
         tab_id: TabId,
         window_id: WindowId,
     },
+    PaneFocused(PaneId),
+    TabResized(TabId),
+    TabTitleChanged {
+        tab_id: TabId,
+        title: String,
+    },
+    WindowTitleChanged {
+        window_id: WindowId,
+        title: String,
+    },
+    WorkspaceRenamed {
+        old_workspace: String,
+        new_workspace: String,
+    },
 }
 
 static SUB_ID: AtomicUsize = AtomicUsize::new(0);
@@ -100,24 +114,35 @@ const BUFSIZE: usize = 1024 * 1024;
 
 /// This function applies parsed actions to the pane and notifies any
 /// mux subscribers about the output event
-fn send_actions_to_mux(pane: &Arc<dyn Pane>, actions: Vec<Action>) {
+fn send_actions_to_mux(pane: &Weak<dyn Pane>, dead: &Arc<AtomicBool>, actions: Vec<Action>) {
     let start = Instant::now();
-    pane.perform_actions(actions);
-    histogram!(
-        "send_actions_to_mux.perform_actions.latency",
-        start.elapsed()
-    );
-    Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane.pane_id()));
+    match pane.upgrade() {
+        Some(pane) => {
+            pane.perform_actions(actions);
+            histogram!(
+                "send_actions_to_mux.perform_actions.latency",
+                start.elapsed()
+            );
+            Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane.pane_id()));
+        }
+        None => {
+            // Something else removed the pane from
+            // the mux, so signal that we should stop
+            // trying to process it in read_from_pane_pty.
+            dead.store(true, Ordering::Relaxed);
+        }
+    }
     histogram!("send_actions_to_mux.rate", 1.);
 }
 
-fn parse_buffered_data(pane: Arc<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: FileDescriptor) {
+fn parse_buffered_data(pane: Weak<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: FileDescriptor) {
     let mut buf = vec![0; configuration().mux_output_parser_buffer_size];
     let mut parser = termwiz::escape::parser::Parser::new();
     let mut actions = vec![];
     let mut hold = false;
     let mut action_size = 0;
-    let mut delay_ms = configuration().mux_output_parser_coalesce_delay_ms;
+    let mut delay = Duration::from_millis(configuration().mux_output_parser_coalesce_delay_ms);
+    let mut deadline = None;
 
     loop {
         match rx.read(&mut buf) {
@@ -140,7 +165,7 @@ fn parse_buffered_data(pane: Arc<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: File
 
                             // Flush prior actions
                             if !actions.is_empty() {
-                                send_actions_to_mux(&pane, std::mem::take(&mut actions));
+                                send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
                                 action_size = 0;
                             }
                         }
@@ -159,7 +184,7 @@ fn parse_buffered_data(pane: Arc<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: File
                     action.append_to(&mut actions);
 
                     if flush && !actions.is_empty() {
-                        send_actions_to_mux(&pane, std::mem::take(&mut actions));
+                        send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
                         action_size = 0;
                     }
                 });
@@ -170,13 +195,20 @@ fn parse_buffered_data(pane: Arc<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: File
                     // that we coalesce a full "frame" from an unoptimized
                     // TUI program
                     if action_size < buf.len() {
-                        if delay_ms > 0 {
+                        let poll_delay = match deadline {
+                            None => {
+                                deadline.replace(Instant::now() + delay);
+                                Some(delay)
+                            }
+                            Some(target) => target.checked_duration_since(Instant::now()),
+                        };
+                        if poll_delay.is_some() {
                             let mut pfd = [pollfd {
                                 fd: rx.as_socket_descriptor(),
                                 events: POLLIN,
                                 revents: 0,
                             }];
-                            if let Ok(1) = poll(&mut pfd, Some(Duration::from_millis(delay_ms))) {
+                            if let Ok(1) = poll(&mut pfd, poll_delay) {
                                 // We can read now without blocking, so accumulate
                                 // more data into actions
                                 continue;
@@ -187,13 +219,14 @@ fn parse_buffered_data(pane: Arc<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: File
                         }
                     }
 
-                    send_actions_to_mux(&pane, std::mem::take(&mut actions));
+                    send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
+                    deadline = None;
                     action_size = 0;
                 }
 
                 let config = configuration();
                 buf.resize(config.mux_output_parser_buffer_size, 0);
-                delay_ms = config.mux_output_parser_coalesce_delay_ms;
+                delay = Duration::from_millis(config.mux_output_parser_coalesce_delay_ms);
             }
         }
     }
@@ -203,7 +236,7 @@ fn parse_buffered_data(pane: Arc<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: File
     // for very short lived commands so that we don't forget to
     // display what they displayed.
     if !actions.is_empty() {
-        send_actions_to_mux(&pane, std::mem::take(&mut actions));
+        send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
     }
 }
 
@@ -237,7 +270,7 @@ fn allocate_socketpair() -> anyhow::Result<(FileDescriptor, FileDescriptor)> {
 /// all platforms and pty/tty types), parse the escape sequences and
 /// relay the actions to the mux thread to apply them to the pane.
 fn read_from_pane_pty(
-    pane: Arc<dyn Pane>,
+    pane: Weak<dyn Pane>,
     banner: Option<String>,
     mut reader: Box<dyn std::io::Read>,
 ) {
@@ -247,7 +280,10 @@ fn read_from_pane_pty(
     // or in the main mux thread.  If `true`, this thread will terminate.
     let dead = Arc::new(AtomicBool::new(false));
 
-    let pane_id = pane.pane_id();
+    let pane_id = match pane.upgrade() {
+        Some(pane) => pane.pane_id(),
+        None => return,
+    };
 
     let (mut tx, rx) = match allocate_socketpair() {
         Ok(pair) => pair,
@@ -419,7 +455,13 @@ impl Mux {
         for window in self.windows.read().values() {
             let workspace = window.get_workspace();
             for tab in window.iter() {
-                *count.entry(workspace.to_string()).or_insert(0) += tab.count_panes();
+                *count.entry(workspace.to_string()).or_insert(0) += match tab.count_panes() {
+                    Some(n) => n,
+                    None => {
+                        // Busy: abort this and we'll retry later
+                        return;
+                    }
+                };
             }
         }
         *self.num_panes_by_workspace.write() = count;
@@ -462,6 +504,38 @@ impl Mux {
         if let Some(pane) = self.get_pane(pane_id) {
             pane.focus_changed(true);
         }
+    }
+
+    /// Called by PaneFocused event handlers to reconcile a remote
+    /// pane focus event and apply its effects locally
+    pub fn focus_pane_and_containing_tab(&self, pane_id: PaneId) -> anyhow::Result<()> {
+        let pane = self
+            .get_pane(pane_id)
+            .ok_or_else(|| anyhow::anyhow!("pane {pane_id} not found"))?;
+
+        let (_domain, window_id, tab_id) = self
+            .resolve_pane_id(pane_id)
+            .ok_or_else(|| anyhow::anyhow!("can't find {pane_id} in the mux"))?;
+
+        // Focus/activate the containing tab within its window
+        {
+            let mut win = self
+                .get_window_mut(window_id)
+                .ok_or_else(|| anyhow::anyhow!("window_id {window_id} not found"))?;
+            let tab_idx = win
+                .idx_by_id(tab_id)
+                .ok_or_else(|| anyhow::anyhow!("tab {tab_id} not in {window_id}"))?;
+            win.save_and_then_set_active(tab_idx);
+        }
+
+        // Focus/activate the pane locally
+        let tab = self
+            .get_tab(tab_id)
+            .ok_or_else(|| anyhow::anyhow!("tab {tab_id} not found"))?;
+
+        tab.set_active_pane(&pane);
+
+        Ok(())
     }
 
     pub fn register_client(&self, client_id: Arc<ClientId>) {
@@ -538,6 +612,31 @@ impl Mux {
     pub fn set_active_workspace(&self, workspace: &str) {
         if let Some(ident) = self.identity.read().clone() {
             self.set_active_workspace_for_client(&ident, workspace);
+        }
+    }
+
+    pub fn rename_workspace(&self, old_workspace: &str, new_workspace: &str) {
+        if old_workspace == new_workspace {
+            return;
+        }
+        self.notify(MuxNotification::WorkspaceRenamed {
+            old_workspace: old_workspace.to_string(),
+            new_workspace: new_workspace.to_string(),
+        });
+
+        for window in self.windows.write().values_mut() {
+            if window.get_workspace() == old_workspace {
+                window.set_workspace(new_workspace);
+            }
+        }
+        self.recompute_pane_count();
+        for client in self.clients.write().values_mut() {
+            if client.active_workspace.as_deref() == Some(old_workspace) {
+                client.active_workspace.replace(new_workspace.to_string());
+                self.notify(MuxNotification::ActiveWorkspaceChanged(
+                    client.client_id.clone(),
+                ));
+            }
         }
     }
 
@@ -663,7 +762,7 @@ impl Mux {
         let pane_id = pane.pane_id();
         if let Some(reader) = pane.reader()? {
             let banner = self.banner.read().clone();
-            let pane = Arc::clone(pane);
+            let pane = Arc::downgrade(pane);
             thread::spawn(move || read_from_pane_pty(pane, banner, reader));
         }
         self.recompute_pane_count();
@@ -720,12 +819,31 @@ impl Mux {
 
     fn remove_window_internal(&self, window_id: WindowId) {
         log::debug!("remove_window_internal {}", window_id);
-        let domains: Vec<Arc<dyn Domain>> = self.domains.read().values().cloned().collect();
-        for dom in domains {
-            dom.local_window_is_closing(window_id);
-        }
+
         let window = self.windows.write().remove(&window_id);
         if let Some(window) = window {
+            // Gather all the domains referenced by this window
+            let mut domains_of_window = HashSet::new();
+            for tab in window.iter() {
+                for pane in tab.iter_panes_ignoring_zoom() {
+                    domains_of_window.insert(pane.pane.domain_id());
+                }
+            }
+
+            for domain_id in domains_of_window {
+                if let Some(domain) = self.get_domain(domain_id) {
+                    if domain.detachable() {
+                        log::info!("detaching domain");
+                        if let Err(err) = domain.detach() {
+                            log::error!(
+                                "while detaching domain {domain_id} {}: {err:#}",
+                                domain.domain_name()
+                            );
+                        }
+                    }
+                }
+            }
+
             for tab in window.iter() {
                 self.remove_tab_internal(tab.tab_id());
             }
@@ -992,10 +1110,11 @@ impl Mux {
         &self,
         command_dir: Option<String>,
         pane: Option<Arc<dyn Pane>>,
+        target_domain: DomainId,
     ) -> Option<String> {
         command_dir.or_else(|| {
             match pane {
-                Some(pane) => pane
+                Some(pane) if pane.domain_id() == target_domain => pane
                     .get_current_working_dir()
                     .and_then(|url| {
                         percent_decode_str(url.path())
@@ -1014,7 +1133,7 @@ impl Mux {
                             path
                         }
                     }),
-                None => None,
+                _ => None,
             }
         })
     }
@@ -1050,7 +1169,11 @@ impl Mux {
                 command_dir,
             } => SplitSource::Spawn {
                 command,
-                command_dir: self.resolve_cwd(command_dir, Some(Arc::clone(&current_pane))),
+                command_dir: self.resolve_cwd(
+                    command_dir,
+                    Some(Arc::clone(&current_pane)),
+                    domain.domain_id(),
+                ),
             },
             other => other,
         };
@@ -1081,9 +1204,21 @@ impl Mux {
         window_id: Option<WindowId>,
         workspace_for_new_window: Option<String>,
     ) -> anyhow::Result<(Arc<Tab>, WindowId)> {
-        let (_domain, _src_window, src_tab) = self
+        let (domain_id, _src_window, src_tab) = self
             .resolve_pane_id(pane_id)
             .ok_or_else(|| anyhow::anyhow!("pane {} not found", pane_id))?;
+
+        let domain = self
+            .get_domain(domain_id)
+            .ok_or_else(|| anyhow::anyhow!("domain {domain_id} of pane {pane_id} not found"))?;
+
+        if let Some((tab, window_id)) = domain
+            .move_pane_to_new_tab(pane_id, window_id, workspace_for_new_window.clone())
+            .await?
+        {
+            return Ok((tab, window_id));
+        }
+
         let src_tab = match self.get_tab(src_tab) {
             Some(t) => t,
             None => anyhow::bail!("Invalid tab id {}", src_tab),
@@ -1182,6 +1317,7 @@ impl Mux {
                 }
                 None => None,
             },
+            domain.domain_id(),
         );
 
         let tab = domain

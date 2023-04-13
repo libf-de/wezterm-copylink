@@ -20,7 +20,7 @@ The meanings of the fields are:
 * `WORKSPACE` - shows the active workspace for that session
 * `FOCUS` - shows the pane id of the pane that has focus in that session
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 You may request JSON output:
 
@@ -43,4 +43,10 @@ $ wezterm cli list-clients --format json
     "focused_pane_id": 0
   }
 ]
+```
+
+## Synopsis
+
+```console
+{% include "../../examples/cmd-synopsis-wezterm-cli-list-clients--help.txt" %}
 ```

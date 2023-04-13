@@ -1,3 +1,7 @@
+---
+tags:
+  - gpu
+---
 # `front_end = "OpenGL"`
 
 Specifies which render front-end to use.  This option used to have
@@ -6,7 +10,7 @@ possible values:
 
 * `OpenGL` - use GPU accelerated rasterization (this is the default)
 * `Software` - use CPU-based rasterization.
-* `WebGpu` - use GPU accelerated rasterization (*Since: 20221119-145034-49b9839f*)
+* `WebGpu` - use GPU accelerated rasterization {{since('20221119-145034-49b9839f', inline=True)}}
 
 You may wish (or need!) to select `Software` if there are issues with your
 GPU/OpenGL drivers.
@@ -16,7 +20,7 @@ being started in a Remote Desktop environment on Windows.
 
 ## WebGpu
 
-*Since: 20221119-145034-49b9839f*
+{{since('20221119-145034-49b9839f')}}
 
 The WebGpu front end allows wezterm to use GPU acceleration provided by
 a number of platform-specific backends:

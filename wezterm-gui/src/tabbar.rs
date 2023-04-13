@@ -10,6 +10,7 @@ use termwiz::escape::{Action, ControlCode, CSI};
 use termwiz::surface::SEQ_ZERO;
 use termwiz_funcs::{format_as_escapes, FormatItem};
 use wezterm_term::Line;
+use window::{IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabBarState {
@@ -24,6 +25,7 @@ pub enum TabBarItem {
     RightStatus,
     Tab { tab_idx: usize, active: bool },
     NewTabButton,
+    WindowButton(IntegratedTitleButton),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -114,7 +116,11 @@ fn compute_tab_title(
         Some(title) => title,
         None => {
             let title = if let Some(pane) = &tab.active_pane {
-                let mut title = pane.title.clone();
+                let mut title = if tab.tab_title.is_empty() {
+                    pane.title.clone()
+                } else {
+                    tab.tab_title.clone()
+                };
                 let classic_spacing = if config.use_fancy_tab_bar { "" } else { " " };
                 if config.show_tab_index_in_tab_bar {
                     title = format!(
@@ -126,7 +132,7 @@ fn compute_tab_title(
                             } else {
                                 1
                             },
-                        pane.title,
+                        title,
                         classic_spacing,
                     );
                 }
@@ -179,6 +185,93 @@ impl TabBarState {
         &self.items
     }
 
+    fn integrated_title_buttons(
+        mouse_x: Option<usize>,
+        x: &mut usize,
+        config: &ConfigHandle,
+        items: &mut Vec<TabEntry>,
+        line: &mut Line,
+        colors: &TabBarColors,
+    ) {
+        let default_cell = if config.use_fancy_tab_bar {
+            CellAttributes::default()
+        } else {
+            colors.new_tab().as_cell_attributes()
+        };
+
+        let default_cell_hover = if config.use_fancy_tab_bar {
+            CellAttributes::default()
+        } else {
+            colors.new_tab_hover().as_cell_attributes()
+        };
+
+        let window_hide =
+            parse_status_text(&config.tab_bar_style.window_hide, default_cell.clone());
+        let window_hide_hover = parse_status_text(
+            &config.tab_bar_style.window_hide_hover,
+            default_cell_hover.clone(),
+        );
+
+        let window_maximize =
+            parse_status_text(&config.tab_bar_style.window_maximize, default_cell.clone());
+        let window_maximize_hover = parse_status_text(
+            &config.tab_bar_style.window_maximize_hover,
+            default_cell_hover.clone(),
+        );
+
+        let window_close =
+            parse_status_text(&config.tab_bar_style.window_close, default_cell.clone());
+        let window_close_hover = parse_status_text(
+            &config.tab_bar_style.window_close_hover,
+            default_cell_hover.clone(),
+        );
+
+        for button in &config.integrated_title_buttons {
+            use IntegratedTitleButton as Button;
+            let title = match button {
+                Button::Hide => {
+                    let hover = is_tab_hover(mouse_x, *x, window_hide_hover.len());
+
+                    if hover {
+                        &window_hide_hover
+                    } else {
+                        &window_hide
+                    }
+                }
+                Button::Maximize => {
+                    let hover = is_tab_hover(mouse_x, *x, window_maximize_hover.len());
+
+                    if hover {
+                        &window_maximize_hover
+                    } else {
+                        &window_maximize
+                    }
+                }
+                Button::Close => {
+                    let hover = is_tab_hover(mouse_x, *x, window_close_hover.len());
+
+                    if hover {
+                        &window_close_hover
+                    } else {
+                        &window_close
+                    }
+                }
+            };
+
+            line.append_line(title.to_owned(), SEQ_ZERO);
+
+            let width = title.len();
+            items.push(TabEntry {
+                item: TabBarItem::WindowButton(*button),
+                title: title.to_owned(),
+                x: *x,
+                width,
+            });
+
+            *x += width;
+        }
+    }
+
     /// Build a new tab bar from the current state
     /// mouse_x is some if the mouse is on the same row as the tab bar.
     /// title_width is the total number of cell columns in the window.
@@ -217,6 +310,10 @@ impl TabBarState {
                 new_tab_hover_attrs.clone()
             },
         );
+
+        let use_integrated_title_buttons = config
+            .window_decorations
+            .contains(window::WindowDecorations::INTEGRATED_BUTTONS);
 
         // We ultimately want to produce a line looking like this:
         // ` | tab1-title x | tab2-title x |  +      . - X `
@@ -270,6 +367,23 @@ impl TabBarState {
                 .set_background(ColorSpec::TrueColor(*colors.background()))
                 .clone(),
         );
+
+        if use_integrated_title_buttons
+            && config.integrated_title_button_style == IntegratedTitleButtonStyle::MacOsNative
+            && config.use_fancy_tab_bar == false
+        {
+            for _ in 0..10 as usize {
+                line.insert_cell(0, black_cell.clone(), title_width, SEQ_ZERO);
+                x += 1;
+            }
+        }
+
+        if use_integrated_title_buttons
+            && config.integrated_title_button_style != IntegratedTitleButtonStyle::MacOsNative
+            && config.integrated_title_button_alignment == IntegratedTitleButtonAlignment::Left
+        {
+            Self::integrated_title_buttons(mouse_x, &mut x, config, &mut items, &mut line, &colors);
+        }
 
         let left_status_line = parse_status_text(left_status, black_cell.attrs().clone());
         if left_status_line.len() > 0 {
@@ -358,6 +472,55 @@ impl TabBarState {
             x += width;
         }
 
+        // Reserve place for integrated title buttons
+        let title_width = if use_integrated_title_buttons
+            && config.integrated_title_button_style != IntegratedTitleButtonStyle::MacOsNative
+            && config.integrated_title_button_alignment == IntegratedTitleButtonAlignment::Right
+        {
+            let window_hide =
+                parse_status_text(&config.tab_bar_style.window_hide, CellAttributes::default());
+            let window_hide_hover = parse_status_text(
+                &config.tab_bar_style.window_hide_hover,
+                CellAttributes::default(),
+            );
+
+            let window_maximize = parse_status_text(
+                &config.tab_bar_style.window_maximize,
+                CellAttributes::default(),
+            );
+            let window_maximize_hover = parse_status_text(
+                &config.tab_bar_style.window_maximize_hover,
+                CellAttributes::default(),
+            );
+            let window_close = parse_status_text(
+                &config.tab_bar_style.window_close,
+                CellAttributes::default(),
+            );
+            let window_close_hover = parse_status_text(
+                &config.tab_bar_style.window_close_hover,
+                CellAttributes::default(),
+            );
+
+            let hide_len = window_hide.len().max(window_hide_hover.len());
+            let maximize_len = window_maximize.len().max(window_maximize_hover.len());
+            let close_len = window_close.len().max(window_close_hover.len());
+
+            let mut width_to_reserve = 0;
+            for button in &config.integrated_title_buttons {
+                use IntegratedTitleButton as Button;
+                let button_len = match button {
+                    Button::Hide => hide_len,
+                    Button::Maximize => maximize_len,
+                    Button::Close => close_len,
+                };
+                width_to_reserve += button_len;
+            }
+
+            title_width.saturating_sub(width_to_reserve)
+        } else {
+            title_width
+        };
+
         let status_space_available = title_width.saturating_sub(x);
 
         let mut right_status_line = parse_status_text(right_status, black_cell.attrs().clone());
@@ -377,22 +540,28 @@ impl TabBarState {
             line.insert_cell(x, black_cell.clone(), title_width, SEQ_ZERO);
         }
 
+        if use_integrated_title_buttons
+            && config.integrated_title_button_style != IntegratedTitleButtonStyle::MacOsNative
+            && config.integrated_title_button_alignment == IntegratedTitleButtonAlignment::Right
+        {
+            x = title_width;
+            Self::integrated_title_buttons(mouse_x, &mut x, config, &mut items, &mut line, &colors);
+        }
+
         Self { line, items }
     }
 
     pub fn compute_ui_items(&self, y: usize, cell_height: usize, cell_width: usize) -> Vec<UIItem> {
         let mut items = vec![];
-        let mut last_x = 0;
 
         for entry in self.items.iter() {
             items.push(UIItem {
-                x: last_x * cell_width,
+                x: entry.x * cell_width,
                 width: entry.width * cell_width,
                 y,
                 height: cell_height,
                 item_type: UIItemType::TabBar(entry.item),
             });
-            last_x += entry.width;
         }
 
         items

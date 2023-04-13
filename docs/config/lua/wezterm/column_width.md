@@ -1,6 +1,13 @@
+---
+title: wezterm.column_width
+tags:
+ - utility
+ - string
+---
+
 # wezterm.column_width(string)
 
-*Since: 20210502-130208-bff6815d*
+{{since('20210502-130208-bff6815d')}}
 
 Given a string parameter, returns the number of columns that that text occupies
 in the terminal, which is useful together with

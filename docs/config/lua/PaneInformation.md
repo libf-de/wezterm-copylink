@@ -20,7 +20,7 @@ The `PaneInformation` struct contains the following fields:
 * `title` - the title of the pane, per [pane:get_title()](pane/get_title.md) at the time the pane information was captured
 * `user_vars` - the user variables defined for the pane, per [pane:get_user_vars()](pane/get_user_vars.md) at the time the pane information was captured.
 
-*Since: 20220101-133340-7edc5b5a*
+{{since('20220101-133340-7edc5b5a')}}
 
 Additional fields are available; note that accessing these may not be cheap to
 compute and may slow down wezterm.  Unlike the fields listed above, these are
@@ -63,7 +63,7 @@ wezterm.on(
 return {}
 ```
 
-*Since: 20220319-142410-0fcdea07*
+{{since('20220319-142410-0fcdea07')}}
 
 The `has_unseen_output` field returns true if the there has been output
 in the pane since the last time it was focused.
@@ -73,6 +73,7 @@ tab in the tab bar when there is unseen output.
 
 ```lua
 local wezterm = require 'wezterm'
+local config = {}
 
 wezterm.on(
   'format-tab-title',
@@ -100,10 +101,10 @@ wezterm.on(
   end
 )
 
-return {}
+return config
 ```
 
-*Since: 20220624-141144-bd1b7c5d*
+{{since('20220624-141144-bd1b7c5d')}}
 
 The `domain_name` field returns the name of the domain with which the pane is associated.
 
@@ -111,6 +112,7 @@ This example shows the domain name of the active pane appended to the tab title:
 
 ```lua
 local wezterm = require 'wezterm'
+local config = {}
 
 wezterm.on('format-tab-title', function(tab)
   local pane = tab.active_pane
@@ -121,6 +123,10 @@ wezterm.on('format-tab-title', function(tab)
   return title
 end)
 
-return {}
+return config
 ```
 
+{{since('20230408-112425-69ae8472')}}
+
+The `tty_name` field returns the tty name with the same constraints as described
+in [pane:get_tty_name()](pane/get_tty_name.md).
