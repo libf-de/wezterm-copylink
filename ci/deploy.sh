@@ -227,6 +227,11 @@ if [ "\$1" = "remove" ]; then
 fi
 EOF
 
+        cat > pkg/debian/rules <<EOF
+override_dh_builddeb:
+    dh_builddeb -- -Zgzip
+EOF
+
         install -Dsm755 -t pkg/debian/usr/bin target/release/wezterm-mux-server
         install -Dsm755 -t pkg/debian/usr/bin target/release/wezterm-gui
         install -Dsm755 -t pkg/debian/usr/bin target/release/wezterm
