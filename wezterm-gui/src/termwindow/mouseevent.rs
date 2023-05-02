@@ -1,5 +1,4 @@
 use crate::tabbar::TabBarItem;
-use crate::termwindow::keyevent::window_mods_to_termwiz_mods;
 use crate::termwindow::{
     GuiWin, MouseCapture, PositionedSplit, ScrollHit, TermWindowNotif, UIItem, UIItemType, TMB,
 };
@@ -59,14 +58,12 @@ impl super::TermWindow {
         }
     }
 
-    pub fn mouse_event_impl(&mut self, mut event: MouseEvent, context: &dyn WindowOps) {
+    pub fn mouse_event_impl(&mut self, event: MouseEvent, context: &dyn WindowOps) {
         log::trace!("{:?}", event);
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
             None => return,
         };
-
-        event.modifiers = event.modifiers.remove_keyboard_status_mods();
 
         self.current_mouse_event.replace(event.clone());
 
@@ -529,7 +526,14 @@ impl super::TermWindow {
                     context.set_window_drag_position(event.screen_coords);
                 }
                 TabBarItem::WindowButton(window::IntegratedTitleButton::Maximize) => {
-                    context.set_maximize_button_position(event.screen_coords);
+                    let item = self.last_ui_item.clone().unwrap();
+                    let bounds: ::window::ScreenRect = euclid::rect(
+                        item.x as isize - (event.coords.x as isize - event.screen_coords.x),
+                        item.y as isize - (event.coords.y as isize - event.screen_coords.y),
+                        item.width as isize,
+                        item.height as isize,
+                    );
+                    context.set_maximize_button_position(bounds);
                 }
                 TabBarItem::WindowButton(_)
                 | TabBarItem::Tab { .. }
@@ -984,7 +988,7 @@ impl super::TermWindow {
             y: row,
             x_pixel_offset,
             y_pixel_offset,
-            modifiers: window_mods_to_termwiz_mods(event.modifiers),
+            modifiers: event.modifiers,
         };
 
         if allow_action

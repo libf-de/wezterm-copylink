@@ -140,6 +140,7 @@ pub struct WaylandWindowInner {
     hscroll_remainder: f64,
     vscroll_remainder: f64,
     modifiers: Modifiers,
+    leds: KeyboardLedStatus,
     key_repeat: Option<(u32, Arc<Mutex<KeyRepeatState>>)>,
     pending_event: Arc<Mutex<PendingEvent>>,
     pending_mouse: Arc<Mutex<PendingMouse>>,
@@ -367,6 +368,7 @@ impl WaylandWindow {
             hscroll_remainder: 0.0,
             vscroll_remainder: 0.0,
             modifiers: Modifiers::NONE,
+            leds: KeyboardLedStatus::empty(),
             pending_event,
             pending_mouse,
             pending_first_configure: Some(pending_first_configure),
@@ -464,7 +466,19 @@ impl WaylandWindowInner {
                 ..
             } => {
                 mapper.update_modifier_state(mods_depressed, mods_latched, mods_locked, group);
+
+                let mods = mapper.get_key_modifiers();
+                let leds = mapper.get_led_status();
+
+                let changed = (mods != self.modifiers) || (leds != self.leds);
+
                 self.modifiers = mapper.get_key_modifiers();
+                self.leds = mapper.get_led_status();
+
+                if changed {
+                    self.events
+                        .dispatch(WindowEvent::AdviseModifiersLedStatus(mods, leds));
+                }
             }
             _ => {}
         }
@@ -1093,15 +1107,16 @@ impl WaylandWindowInner {
     }
 
     fn set_cursor(&mut self, cursor: Option<MouseCursor>) {
-        let cursor = cursor.map(|cursor| match cursor {
-            MouseCursor::Arrow => "arrow",
-            MouseCursor::Hand => "hand",
-            MouseCursor::SizeUpDown => "ns-resize",
-            MouseCursor::SizeLeftRight => "ew-resize",
-            MouseCursor::Text => "xterm",
-        });
+        let names: &[&str] = match cursor {
+            Some(MouseCursor::Arrow) => &["arrow"],
+            Some(MouseCursor::Hand) => &["hand"],
+            Some(MouseCursor::SizeUpDown) => &["ns-resize"],
+            Some(MouseCursor::SizeLeftRight) => &["ew-resize"],
+            Some(MouseCursor::Text) => &["xterm"],
+            None => &[],
+        };
         let conn = Connection::get().unwrap().wayland();
-        conn.pointer.borrow().set_cursor(cursor, None);
+        conn.pointer.borrow().set_cursor(names, None);
     }
 
     fn invalidate(&mut self) {

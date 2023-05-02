@@ -350,6 +350,20 @@ impl super::TermWindow {
                 self.dimensions.pixel_height as f32,
             )));
 
+        if simple_dpi_change && cfg!(target_os = "macos") {
+            // Spooky action at a distance: on macOS, NSWindow::isZoomed can falsely
+            // return YES in situations such as the current screen changing.
+            // That causes window_state to believe that we are MAXIMIZED.
+            // We cannot easily detect that in the window layer, but at this
+            // layer, if we realize that the dpi was the only thing that changed
+            // then remove the MAXIMIZED state so that the can_resize check
+            // in adjust_font_scale will not block us from adapting to the new
+            // DPI. This is gross and it would be better handled at the macOS
+            // layer.
+            // <https://github.com/wez/wezterm/issues/3503>
+            self.window_state -= WindowState::MAXIMIZED;
+        }
+
         let dpi_changed = dimensions.dpi != self.dimensions.dpi;
         let font_scale_changed = font_scale != self.fonts.get_font_scale();
         let scale_changed = dpi_changed || font_scale_changed;
@@ -385,8 +399,20 @@ impl super::TermWindow {
     /// the `adjust_window_size_when_changing_font_size` configuration and
     /// revises the scaling/resize change accordingly
     pub fn adjust_font_scale(&mut self, font_scale: f64, window: &Window) {
-        if self.window_state.can_resize() && self.config.adjust_window_size_when_changing_font_size
-        {
+        let adjust_window_size_when_changing_font_size =
+            match self.config.adjust_window_size_when_changing_font_size {
+                Some(value) => value,
+                None => {
+                    let is_tiling = self
+                        .config
+                        .tiling_desktop_environments
+                        .iter()
+                        .any(|item| item.as_str() == self.connection_name.as_str());
+                    !is_tiling
+                }
+            };
+
+        if self.window_state.can_resize() && adjust_window_size_when_changing_font_size {
             self.scaling_changed(self.dimensions, font_scale, window);
         } else {
             let dimensions = self.dimensions;

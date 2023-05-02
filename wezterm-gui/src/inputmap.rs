@@ -439,9 +439,7 @@ impl InputMap {
 
     pub fn is_leader(&self, key: &KeyCode, mods: Modifiers) -> Option<std::time::Duration> {
         if let Some((leader_key, leader_mods, timeout)) = self.leader.as_ref() {
-            if *leader_key == *key
-                && *leader_mods == mods.remove_positional_mods().remove_keyboard_status_mods()
-            {
+            if *leader_key == *key && *leader_mods == mods.remove_positional_mods() {
                 return Some(timeout.clone());
             }
         }
@@ -464,7 +462,7 @@ impl InputMap {
         };
 
         table
-            .get(&key.normalize_shift(mods.remove_positional_mods().remove_keyboard_status_mods()))
+            .get(&key.normalize_shift(mods.remove_positional_mods()))
             .cloned()
     }
 
@@ -473,10 +471,7 @@ impl InputMap {
         event: MouseEventTrigger,
         mut mods: MouseEventTriggerMods,
     ) -> Option<KeyAssignment> {
-        mods.mods = mods
-            .mods
-            .remove_positional_mods()
-            .remove_keyboard_status_mods();
+        mods.mods = mods.mods.remove_positional_mods();
         self.mouse.get(&(event, mods)).cloned()
     }
 

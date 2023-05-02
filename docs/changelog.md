@@ -21,17 +21,68 @@ usually the best available version.
 
 As features stabilize some brief notes about them will accumulate here.
 
+#### Changed
+
+* The default for [front_end](config/lua/config/front_end.md) is now `WebGpu`.
+* The default for
+  [adjust_window_size_when_changing_font_size](config/lua/config/adjust_window_size_when_changing_font_size.md)
+  now depends on the window environment and the contents of
+  [tiling_desktop_environments](config/lua/config/tiling_desktop_environments.md).
+* Added eigth block corner glyphs to custom block glyphs. Thanks to @joouha! #3559
+* Don't hide mouse cursor when pressing only modifier keys. #3570
+* [PaneSelect](config/lua/keyassignment/PaneSelect.md) will now un-zoom to show
+  all panes, then re-zoom after performing its action. #3573
+
+#### New
+
+* [window:keyboard_modifiers](config/lua/window/keyboard_modifiers.md) #3444
+* [win32_system_backdrop](config/lua/config/win32_system_backdrop.md). Thanks to @kingavatar! #3528 #1614
+* [wezterm cli adjust-pane-size](cli/cli/adjust-pane-size.md). Thanks to @mrjones2014! #3471 #3491
+* [augment-command-palette](config/lua/window-events/augment-command-palette.md)
+  event for adding entries to the command palette without assigning keyboard
+  shortcuts. #3595
+
 #### Fixed
 
 * Modals, such as `CharSelect` and `CommandPalette` did not respect alternative
   OS-level key maps. #3470
-* key encoding: incorrect F1-F4 representation when using kitty encoding. #3473
+* Numerous issues with the kitty keyboard protocol implementation #2546 #3220
+  #3315 #3473 #3474 #3476 #3478 #3479 #3484 #3526
 * mux: Attempting to spawn into an ad-hoc SSH domain after the last tab could
   fail with a cryptic error message. The connection is now re-established. ?3480
 * Laggy behavior when processing a continual stream of output, for example,
   serial data received at a rate of 1 byte just slightly faster than
   `mux_output_parser_coalesce_delay_ms` (`3ms` by default). Thanks to @pcc!
   #3497 #3466 #837.
+* [`user-var-changed` event](config/lua/window-events/user-var-changed.md)
+  would incorrectly trigger for every GUI window, rather than just the GUI
+  window which contained the pane in which the variable was changed. #3524
+* PNG images without an alpha channel could not be displayed by in the
+  terminal. #3529.
+* tab width calculation when returning a string with embedded escape
+  sequences from a `format-tab-title` event handler. #3481
+* Windows: clicking the maximize button didn't work unless using
+  integrated titlebar buttons. #3499
+* Windows: closing a window while the debug overlay was active could
+  leave a lingering wezterm-gui.exe running. #3522
+* Windows: inconsistencies with win32 input mode. Thanks to @kreudom! #2235
+* macOS: font size is zoomed or window appears empty when first launched on a
+  secondary monitor with different scaling settings from the primary monitor. #3503
+* X11/Wayland: CTRL/ALT didn't work as expected for non-latin keyboard layouts. #2845
+* X11: panic after a lot of horizontal touchpad scrolling. #3564
+* Wayland: mouse cursor wouldn't reappear after keyboard input hides it. #3334
+* WebGPU: `window_background_opacity` was not always enabled when using a
+  vulkan backend. #3589
+* macOS: hang or crash when trying to copy or right click the about dialog.
+  The about dialog has been replaced with a menu item that you can click to
+  copy the version number. #3507 #3585
+* Synthesized italics were double-skewed. Thanks to @rozbb! #3613 #3555
+* Panic when using corrupt/invalid webp images as window background #3614
+* imgcat broken when using `wezterm ssh`. #3624
+
+#### Updated
+* Bundled harfbuzz to 7.1.0
+* Bundled freetype to 2.13.0
 
 ### 20230408-112425-69ae8472
 

@@ -1,5 +1,7 @@
 use crate::termwindow::InputMap;
-use ::window::{DeadKeyStatus, KeyCode, KeyEvent, Modifiers, RawKeyEvent, WindowOps};
+use ::window::{
+    DeadKeyStatus, KeyCode, KeyEvent, KeyboardLedStatus, Modifiers, RawKeyEvent, WindowOps,
+};
 use anyhow::Context;
 use config::keyassignment::{KeyAssignment, KeyTableEntry};
 use mux::pane::{Pane, PerformAssignmentResult};
@@ -172,67 +174,6 @@ impl KeyTableState {
     }
 }
 
-pub fn window_mods_to_termwiz_mods(modifiers: ::window::Modifiers) -> termwiz::input::Modifiers {
-    let mut result = termwiz::input::Modifiers::NONE;
-
-    if modifiers.contains(::window::Modifiers::SHIFT) {
-        result.insert(termwiz::input::Modifiers::SHIFT);
-    }
-    if modifiers.contains(::window::Modifiers::LEFT_SHIFT) {
-        result.insert(termwiz::input::Modifiers::LEFT_SHIFT);
-    }
-    if modifiers.contains(::window::Modifiers::RIGHT_SHIFT) {
-        result.insert(termwiz::input::Modifiers::RIGHT_SHIFT);
-    }
-
-    if modifiers.contains(::window::Modifiers::LEFT_ALT) {
-        result.insert(termwiz::input::Modifiers::ALT);
-        result.insert(termwiz::input::Modifiers::LEFT_ALT);
-    }
-    if modifiers.contains(::window::Modifiers::RIGHT_ALT) {
-        /* We DONT want to do this: we carry through RIGHT_ALT
-        * only for win32-input mode to track when AltGr was used,
-        * but we don't want that to be treated as regular ALT
-        * when encoding regular input for the terminal.
-        * <https://github.com/wez/wezterm/issues/2127>
-        result.insert(termwiz::input::Modifiers::ALT);
-        */
-
-        // But we do want the positional mod
-        result.insert(termwiz::input::Modifiers::RIGHT_ALT);
-    }
-    if modifiers.contains(::window::Modifiers::ALT) {
-        result.insert(termwiz::input::Modifiers::ALT);
-    }
-
-    if modifiers.contains(::window::Modifiers::CTRL) {
-        result.insert(termwiz::input::Modifiers::CTRL);
-    }
-    if modifiers.contains(::window::Modifiers::LEFT_CTRL) {
-        result.insert(termwiz::input::Modifiers::LEFT_CTRL);
-    }
-    if modifiers.contains(::window::Modifiers::RIGHT_CTRL) {
-        result.insert(termwiz::input::Modifiers::RIGHT_CTRL);
-    }
-
-    if modifiers.contains(::window::Modifiers::SUPER) {
-        result.insert(termwiz::input::Modifiers::SUPER);
-    }
-    if modifiers.contains(::window::Modifiers::LEADER) {
-        result.insert(termwiz::input::Modifiers::LEADER);
-    }
-    if modifiers.contains(::window::Modifiers::ENHANCED_KEY) {
-        result.insert(termwiz::input::Modifiers::ENHANCED_KEY);
-    }
-    if modifiers.contains(::window::Modifiers::CAPS_LOCK) {
-        result.insert(termwiz::input::Modifiers::CAPS_LOCK);
-    }
-    if modifiers.contains(::window::Modifiers::NUM_LOCK) {
-        result.insert(termwiz::input::Modifiers::NUM_LOCK);
-    }
-    result
-}
-
 #[derive(Debug)]
 pub enum Key {
     Code(::termwiz::input::KeyCode),
@@ -307,9 +248,6 @@ impl super::TermWindow {
         is_down: bool,
         key_event: Option<&KeyEvent>,
     ) -> bool {
-        // We don't allow caps lock or num lock to influence key resolution at the GUI layer.
-        let raw_modifiers = raw_modifiers.remove_keyboard_status_mods();
-
         if is_down && !leader_active {
             // Check to see if this key-press is the leader activating
             if let Some(duration) = self.input_map.is_leader(&keycode, raw_modifiers) {
@@ -334,7 +272,7 @@ impl super::TermWindow {
             if only_key_bindings == OnlyKeyBindings::No {
                 if let Some(modal) = self.get_modal() {
                     if let Key::Code(term_key) = self.win_key_code_to_termwiz_key_code(keycode) {
-                        let tw_raw_modifiers = window_mods_to_termwiz_mods(raw_modifiers);
+                        let tw_raw_modifiers = raw_modifiers;
                         match modal.key_down(term_key, tw_raw_modifiers, self) {
                             Ok(true) => return true,
                             Ok(false) => {}
@@ -420,7 +358,7 @@ impl super::TermWindow {
 
             if bypass_compose {
                 if let Key::Code(term_key) = self.win_key_code_to_termwiz_key_code(keycode) {
-                    let tw_raw_modifiers = window_mods_to_termwiz_mods(raw_modifiers);
+                    let tw_raw_modifiers = raw_modifiers;
 
                     let mut did_encode = false;
                     if let Some(key_event) = key_event {
@@ -466,12 +404,14 @@ impl super::TermWindow {
                     if did_encode {
                         if is_down
                             && !keycode.is_modifier()
-                            && *keycode != KeyCode::CapsLock
                             && self.pane_state(pane.pane_id()).overlay.is_none()
                         {
                             self.maybe_scroll_to_bottom_for_input(&pane);
                         }
-                        if self.config.hide_mouse_cursor_when_typing {
+                        if is_down
+                            && self.config.hide_mouse_cursor_when_typing
+                            && !keycode.is_modifier()
+                        {
                             context.set_cursor(None);
                         }
                         if !keycode.is_modifier() {
@@ -510,6 +450,12 @@ impl super::TermWindow {
                 key,
                 if leader_active { "LEADER" } else { "" }
             );
+        }
+
+        let modifier_and_leds = (key.modifiers, key.leds);
+        if self.current_modifier_and_leds != modifier_and_leds {
+            self.current_modifier_and_leds = modifier_and_leds;
+            self.schedule_next_status_update();
         }
 
         let pane = match self.get_active_pane_or_overlay() {
@@ -579,6 +525,10 @@ impl super::TermWindow {
         ) {
             key.set_handled();
         }
+    }
+
+    pub fn current_modifier_and_led_state(&self) -> (Modifiers, KeyboardLedStatus) {
+        self.current_modifier_and_leds
     }
 
     pub fn leader_is_active(&self) -> bool {
@@ -676,7 +626,7 @@ impl super::TermWindow {
             );
         }
 
-        let modifiers = window_mods_to_termwiz_mods(window_key.modifiers);
+        let modifiers = window_key.modifiers;
 
         if self.process_key(
             &pane,
@@ -759,7 +709,10 @@ impl super::TermWindow {
                     {
                         self.maybe_scroll_to_bottom_for_input(&pane);
                     }
-                    if self.config.hide_mouse_cursor_when_typing {
+                    if window_key.key_is_down
+                        && self.config.hide_mouse_cursor_when_typing
+                        && !key.is_modifier()
+                    {
                         context.set_cursor(None);
                     }
                     if !key.is_modifier() {

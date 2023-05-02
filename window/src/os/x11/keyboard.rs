@@ -9,18 +9,21 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, OsStr};
 use std::os::unix::ffi::OsStrExt;
-use wezterm_input_types::PhysKeyCode;
+use wezterm_input_types::{KeyboardLedStatus, PhysKeyCode};
 use xkb::compose::Status as ComposeStatus;
 use xkbcommon::xkb;
 
 pub struct Keyboard {
     context: xkb::Context,
     keymap: RefCell<xkb::Keymap>,
+    _default_keymap: RefCell<xkb::Keymap>,
     device_id: i32,
 
     state: RefCell<xkb::State>,
+    default_state: RefCell<xkb::State>,
     compose_state: RefCell<Compose>,
     phys_code_map: RefCell<HashMap<xkb::Keycode, PhysKeyCode>>,
+    mods_leds: RefCell<(Modifiers, KeyboardLedStatus)>,
 }
 
 struct Compose {
@@ -108,17 +111,7 @@ impl Compose {
             }
             ComposeStatus::Nothing => {
                 let utf8 = key_state.borrow().key_get_utf8(xcode);
-                // CTRL-<ALPHA> is helpfully encoded in the form that we would
-                // send to the terminal, however, we do want the chance to
-                // distinguish between eg: CTRL-i and Tab, so if we ended up
-                // with a control code representation from the xkeyboard layer,
-                // discard it.
-                // <https://github.com/wez/wezterm/issues/1851>
-                if utf8.len() == 1 && utf8.as_bytes()[0] < 0x20 {
-                    FeedResult::Nothing(String::new(), xsym)
-                } else {
-                    FeedResult::Nothing(utf8, xsym)
-                }
+                FeedResult::Nothing(utf8, xsym)
             }
             ComposeStatus::Cancelled => {
                 self.state.reset();
@@ -126,6 +119,27 @@ impl Compose {
             }
         }
     }
+}
+
+fn default_keymap(context: &xkb::Context) -> Option<xkb::Keymap> {
+    // use $XKB_DEFAULT_RULES or system default
+    let system_default_rules = "";
+    // use $XKB_DEFAULT_MODEL or system default
+    let system_default_model = "";
+    // use $XKB_DEFAULT_LAYOUT or system default
+    let system_default_layout = "";
+    // use $XKB_DEFAULT_VARIANT or system default
+    let system_default_variant = "";
+
+    xkb::Keymap::new_from_names(
+        context,
+        system_default_rules,
+        system_default_model,
+        system_default_layout,
+        system_default_variant,
+        None,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )
 }
 
 impl Keyboard {
@@ -149,16 +163,23 @@ impl Keyboard {
 
         let phys_code_map = build_physkeycode_map(&keymap);
 
+        let default_keymap = default_keymap(&context)
+            .ok_or_else(|| anyhow!("Failed to load system default keymap"))?;
+        let default_state = xkb::State::new(&default_keymap);
+
         Ok(Self {
             context,
             device_id: -1,
             keymap: RefCell::new(keymap),
             state: RefCell::new(state),
+            _default_keymap: RefCell::new(default_keymap),
+            default_state: RefCell::new(default_state),
             compose_state: RefCell::new(Compose {
                 state: compose_state,
                 composition: String::new(),
             }),
             phys_code_map: RefCell::new(phys_code_map),
+            mods_leds: RefCell::new(Default::default()),
         })
     }
 
@@ -213,16 +234,24 @@ impl Keyboard {
         }
 
         let phys_code_map = build_physkeycode_map(&keymap);
+
+        let default_keymap = default_keymap(&context)
+            .ok_or_else(|| anyhow!("Failed to load system default keymap"))?;
+        let default_state = xkb::State::new(&default_keymap);
+
         let kbd = Keyboard {
             context,
             device_id,
             keymap: RefCell::new(keymap),
             state: RefCell::new(state),
+            _default_keymap: RefCell::new(default_keymap),
+            default_state: RefCell::new(default_state),
             compose_state: RefCell::new(Compose {
                 state: compose_state,
                 composition: String::new(),
             }),
             phys_code_map: RefCell::new(phys_code_map),
+            mods_leds: RefCell::new(Default::default()),
         };
 
         Ok((kbd, first_ev))
@@ -269,6 +298,7 @@ impl Keyboard {
     ) -> Option<WindowKeyEvent> {
         let phys_code = self.phys_code_map.borrow().get(&xcode).copied();
         let raw_modifiers = self.get_key_modifiers();
+        let leds = self.get_led_status();
 
         let xsym = self.state.borrow().key_get_one_sym(xcode);
         let handled = Handled::new();
@@ -281,6 +311,7 @@ impl Keyboard {
             phys_code,
             raw_code: xcode,
             modifiers: raw_modifiers,
+            leds,
             repeat_count: 1,
             key_is_down: pressed,
             handled: handled.clone(),
@@ -326,14 +357,45 @@ impl Keyboard {
                     sym
                 }
                 FeedResult::Nothing(utf8, sym) => {
-                    if !utf8.is_empty() {
+                    // Composition had no special expansion.
+                    // Xkb will return a textual representation of the key even when
+                    // it is not generally useful; for example, when CTRL, ALT or SUPER
+                    // are held, we don't want its mapping as it can be counterproductive:
+                    // CTRL-<ALPHA> is helpfully encoded in the form that we would
+                    // send to the terminal, however, we do want the chance to
+                    // distinguish between eg: CTRL-i and Tab.
+                    //
+                    // This logic excludes that textual expansion for this situation.
+                    //
+                    // <https://github.com/wez/wezterm/issues/1851>
+                    // <https://github.com/wez/wezterm/issues/2845>
+                    if !utf8.is_empty()
+                        && !raw_modifiers
+                            .intersects(Modifiers::CTRL | Modifiers::ALT | Modifiers::SUPER)
+                    {
                         kc.replace(crate::KeyCode::composed(&utf8));
                     }
+
+                    // If we don't have a textual expansion in this case, we will
+                    // consider the equivalent key from the system default / base
+                    // layout.
+                    // For example, if RU is active and they pressed CTRL-S that
+                    // will produce utf8=ы here, which is not useful.
+                    // Looking up in the default keymap will resolve us to the S
+                    // key which is more desirable in the context of a terminal.
+                    // default_xsym is that base key
+                    let default_xsym = self.default_state.borrow().key_get_one_sym(xcode);
+
                     log::trace!(
                         "process_key_event: RawKeyEvent FeedResult::Nothing: \
-                                {utf8:?}, {sym:?}. kc -> {kc:?}"
+                                {utf8:?}, {sym:?}. kc -> {kc:?} def_sym={default_xsym:?}"
                     );
-                    sym
+                    if kc.is_none() {
+                        // Use the default key layout symbol instead
+                        default_xsym
+                    } else {
+                        sym
+                    }
                 }
                 FeedResult::Cancelled => {
                     log::trace!("process_key_event: RawKeyEvent FeedResult::Cancelled");
@@ -358,6 +420,7 @@ impl Keyboard {
 
         let event = KeyEvent {
             key: kc,
+            leds,
             modifiers: raw_modifiers,
             repeat_count: 1,
             key_is_down: pressed,
@@ -386,6 +449,19 @@ impl Keyboard {
         self.state.borrow().led_name_is_active(led)
     }
 
+    pub fn get_led_status(&self) -> KeyboardLedStatus {
+        let mut leds = KeyboardLedStatus::empty();
+
+        if self.led_is_active(xkb::LED_NAME_NUM) {
+            leds |= KeyboardLedStatus::NUM_LOCK;
+        }
+        if self.led_is_active(xkb::LED_NAME_CAPS) {
+            leds |= KeyboardLedStatus::CAPS_LOCK;
+        }
+
+        leds
+    }
+
     pub fn get_key_modifiers(&self) -> Modifiers {
         let mut res = Modifiers::default();
 
@@ -403,12 +479,6 @@ impl Keyboard {
             // Mod4
             res |= Modifiers::SUPER;
         }
-        if self.led_is_active(xkb::LED_NAME_NUM) {
-            res |= Modifiers::NUM_LOCK;
-        }
-        if self.led_is_active(xkb::LED_NAME_CAPS) {
-            res |= Modifiers::CAPS_LOCK;
-        }
         res
     }
 
@@ -416,7 +486,9 @@ impl Keyboard {
         &self,
         connection: &xcb::Connection,
         event: &xcb::Event,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<(Modifiers, KeyboardLedStatus)>> {
+        let before = self.mods_leds.borrow().clone();
+
         match event {
             xcb::Event::Xkb(xcb::xkb::Event::StateNotify(e)) => {
                 self.update_state(e);
@@ -428,7 +500,14 @@ impl Keyboard {
             }
             _ => {}
         }
-        Ok(())
+
+        let after = (self.get_key_modifiers(), self.get_led_status());
+        if after != before {
+            *self.mods_leds.borrow_mut() = after.clone();
+            Ok(Some(after))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn update_modifier_state(

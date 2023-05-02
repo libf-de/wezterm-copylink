@@ -74,7 +74,7 @@ pub struct ExpandedCommand {
     pub action: KeyAssignment,
     pub keys: Vec<(Modifiers, KeyCode)>,
     pub menubar: &'static [&'static str],
-    pub icon: Option<&'static str>,
+    pub icon: Option<Cow<'static, str>>,
 }
 
 impl std::fmt::Debug for CommandDef {
@@ -177,7 +177,7 @@ impl CommandDef {
                     keys,
                     action,
                     menubar: def.menubar,
-                    icon: def.icon,
+                    icon: def.icon.map(Cow::Borrowed),
                 })
             }
         }
@@ -214,7 +214,7 @@ impl CommandDef {
                 keys: vec![],
                 action: KeyAssignment::SpawnCommandInNewTab(cmd.clone()),
                 menubar: &["Shell"],
-                icon: Some("mdi_tab_plus"),
+                icon: Some("mdi_tab_plus".into()),
             });
         }
 
@@ -249,7 +249,7 @@ impl CommandDef {
                                 ..SpawnCommand::default()
                             }),
                             menubar: &["Shell"],
-                            icon: Some("mdi_tab_plus"),
+                            icon: Some("mdi_tab_plus".into()),
                         });
                     } else {
                         result.push(ExpandedCommand {
@@ -258,7 +258,7 @@ impl CommandDef {
                             keys: vec![],
                             action: KeyAssignment::AttachDomain(name.to_string()),
                             menubar: &["Shell", "Attach"],
-                            icon: Some("mdi_pipe"),
+                            icon: Some("mdi_pipe".into()),
                         });
                     }
                 }
@@ -280,7 +280,7 @@ impl CommandDef {
                             name.to_string(),
                         )),
                         menubar: &["Shell", "Detach"],
-                        icon: Some("mdi_pipe_disconnected"),
+                        icon: Some("mdi_pipe_disconnected".into()),
                     });
                 }
             }
@@ -331,7 +331,7 @@ impl CommandDef {
                     keys: vec![(*mods, keycode.clone())],
                     action: entry.action.clone(),
                     menubar: cmd.menubar,
-                    icon: cmd.icon,
+                    icon: cmd.icon.map(Cow::Borrowed),
                 });
             }
         }
@@ -351,7 +351,7 @@ impl CommandDef {
                         keys: vec![],
                         action: entry.action.clone(),
                         menubar: cmd.menubar,
-                        icon: cmd.icon,
+                        icon: cmd.icon.map(Cow::Borrowed),
                     });
                 }
             }
@@ -437,11 +437,20 @@ impl CommandDef {
                     } else if cmd.menubar[0] == "WezTerm" {
                         menu.assign_as_app_menu();
 
-                        menu.add_item(&MenuItem::new_with(
-                            "About WezTerm",
-                            Some(sel!(weztermShowAbout:)),
+                        let about_item = MenuItem::new_with(
+                            &format!("WezTerm {}", config::wezterm_version()),
+                            Some(wezterm_perform_key_assignment_sel),
                             "",
+                        );
+                        about_item.set_tool_tip("Click to copy version number");
+                        about_item.set_represented_item(RepresentedItem::KeyAssignment(
+                            KeyAssignment::CopyTextTo {
+                                text: config::wezterm_version().to_string(),
+                                destination: ClipboardCopyDestination::ClipboardAndPrimarySelection,
+                            },
                         ));
+
+                        menu.add_item(&about_item);
                         menu.add_item(&MenuItem::new_separator());
 
                         // FIXME: when we set this as the services menu,
@@ -614,7 +623,11 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Edit"],
             icon: Some("mdi_content_paste"),
         },
-        CopyTo(ClipboardCopyDestination::PrimarySelection) => CommandDef {
+        CopyTextTo {
+            text: _,
+            destination: ClipboardCopyDestination::PrimarySelection,
+        }
+        | CopyTo(ClipboardCopyDestination::PrimarySelection) => CommandDef {
             brief: "Copy to primary selection".into(),
             doc: "Copies text to the primary selection".into(),
             keys: vec![(Modifiers::CTRL, "Insert".into())],
@@ -622,7 +635,11 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Edit"],
             icon: Some("mdi_content_copy"),
         },
-        CopyTo(ClipboardCopyDestination::Clipboard) => CommandDef {
+        CopyTextTo {
+            text: _,
+            destination: ClipboardCopyDestination::Clipboard,
+        }
+        | CopyTo(ClipboardCopyDestination::Clipboard) => CommandDef {
             brief: "Copy to clipboard".into(),
             doc: "Copies text to the clipboard".into(),
             keys: vec![
@@ -633,7 +650,11 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Edit"],
             icon: Some("mdi_content_copy"),
         },
-        CopyTo(ClipboardCopyDestination::ClipboardAndPrimarySelection) => CommandDef {
+        CopyTextTo {
+            text: _,
+            destination: ClipboardCopyDestination::ClipboardAndPrimarySelection,
+        }
+        | CopyTo(ClipboardCopyDestination::ClipboardAndPrimarySelection) => CommandDef {
             brief: "Copy to clipboard and primary selection".into(),
             doc: "Copies text to the clipboard and the primary selection".into(),
             keys: vec![(Modifiers::CTRL, "Insert".into())],

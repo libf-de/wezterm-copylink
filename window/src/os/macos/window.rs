@@ -49,7 +49,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::time::Instant;
 use wezterm_font::FontConfiguration;
-use wezterm_input_types::{is_ascii_control, IntegratedTitleButtonStyle};
+use wezterm_input_types::{is_ascii_control, IntegratedTitleButtonStyle, KeyboardLedStatus};
 
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsPlacementTopLeft: NSInteger = 11;
@@ -744,10 +744,10 @@ impl WindowOps for Window {
     }
 
     fn set_inner_size(&self, width: usize, height: usize) {
-        Connection::with_window_inner(
-            self.id,
-            move |inner| Ok(inner.set_inner_size(width, height)),
-        );
+        Connection::with_window_inner(self.id, move |inner| {
+            inner.set_inner_size(width, height);
+            Ok(())
+        });
     }
 
     fn set_window_position(&self, coords: ScreenPoint) {
@@ -1149,7 +1149,7 @@ impl WindowInner {
         }
     }
 
-    fn set_inner_size(&mut self, width: usize, height: usize) -> Dimensions {
+    fn set_inner_size(&mut self, width: usize, height: usize) {
         unsafe {
             let frame = NSView::frame(*self.view as *mut _);
             let backing_frame = NSView::convertRectToBacking(*self.view as *mut _, frame);
@@ -1160,15 +1160,9 @@ impl WindowInner {
                 NSSize::new(width as f64 / scale, height as f64 / scale),
             );
 
-            let frame = NSView::frame(*self.view as *mut _);
-            let backing_frame = NSView::convertRectToBacking(*self.view as *mut _, frame);
-            let width = backing_frame.size.width;
-            let height = backing_frame.size.height;
-            Dimensions {
-                pixel_width: width as usize,
-                pixel_height: height as usize,
-                dpi: (crate::DEFAULT_DPI * (backing_frame.size.width / frame.size.width)) as usize,
-            }
+            // setContentSize_ doesn't explicitly invalidate,
+            // so we need to do it ourselves
+            self.invalidate();
         }
     }
 
@@ -1680,9 +1674,6 @@ fn key_modifiers(flags: NSEventModifierFlags) -> Modifiers {
     if flags.contains(NSEventModifierFlags::NSCommandKeyMask) {
         mods |= Modifiers::SUPER;
     }
-    if flags.bits() & (1 << 16) != 0 {
-        mods |= Modifiers::CAPS_LOCK;
-    }
 
     mods
 }
@@ -1813,6 +1804,7 @@ impl WindowView {
             let event = KeyEvent {
                 key,
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down,
                 raw: None,
@@ -2282,6 +2274,11 @@ impl WindowView {
         let unmod = unsafe { nsstring_to_str(nsevent.charactersIgnoringModifiers()) };
         let modifier_flags = unsafe { nsevent.modifierFlags() };
         let modifiers = key_modifiers(modifier_flags);
+        let leds = if modifier_flags.bits() & (1 << 16) != 0 {
+            KeyboardLedStatus::CAPS_LOCK
+        } else {
+            KeyboardLedStatus::empty()
+        };
         let virtual_key = unsafe { nsevent.keyCode() };
 
         log::debug!(
@@ -2335,6 +2332,7 @@ impl WindowView {
             },
             phys_code,
             raw_code: virtual_key as _,
+            leds,
             modifiers,
             repeat_count: 1,
             key_is_down,
@@ -2377,6 +2375,7 @@ impl WindowView {
                         let event = KeyEvent {
                             key: KeyCode::composed(&translated),
                             modifiers: Modifiers::NONE,
+                            leds: KeyboardLedStatus::empty(),
                             repeat_count: 1,
                             key_is_down,
                             raw: None,
@@ -2598,6 +2597,7 @@ impl WindowView {
             let event = KeyEvent {
                 key,
                 modifiers,
+                leds,
                 repeat_count: 1,
                 key_is_down,
                 raw: Some(raw_key_event),
@@ -2648,6 +2648,23 @@ impl WindowView {
             // Allow macOS to process built-in shortcuts like CMD-`
             // to cycle though windows
             NO
+        }
+    }
+
+    extern "C" fn flags_changed(this: &mut Object, _sel: Sel, nsevent: id) {
+        let modifier_flags = unsafe { nsevent.modifierFlags() };
+        let modifiers = key_modifiers(modifier_flags);
+        let leds = if modifier_flags.bits() & (1 << 16) != 0 {
+            KeyboardLedStatus::CAPS_LOCK
+        } else {
+            KeyboardLedStatus::empty()
+        };
+
+        if let Some(myself) = Self::get_this(this) {
+            let mut inner = myself.inner.borrow_mut();
+            inner
+                .events
+                .dispatch(WindowEvent::AdviseModifiersLedStatus(modifiers, leds));
         }
     }
 
@@ -2715,6 +2732,11 @@ impl WindowView {
 
             let live_resizing = inner.live_resizing;
 
+            // Note: isZoomed can falsely return YES in situations such as
+            // the current screen changing. We cannot detect that case here.
+            // There is some logic to compensate for this in
+            // wezterm-gui/src/termwindow/resize.rs.
+            // <https://github.com/wez/wezterm/issues/3503>
             let is_zoomed = !is_full_screen
                 && inner.window.as_ref().map_or(false, |window| {
                     let window = window.load();
@@ -3093,6 +3115,11 @@ impl WindowView {
             cls.add_method(
                 sel!(updateTrackingAreas),
                 Self::update_tracking_areas as extern "C" fn(&mut Object, Sel),
+            );
+
+            cls.add_method(
+                sel!(flagsChanged:),
+                Self::flags_changed as extern "C" fn(&mut Object, Sel, id),
             );
 
             // NSTextInputClient

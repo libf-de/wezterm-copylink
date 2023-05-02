@@ -11,6 +11,9 @@ use bitflags::bitflags;
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
+use wezterm_input_types::ctrl_mapping;
+
+pub use wezterm_input_types::Modifiers;
 
 pub const CSI: &str = "\x1b[";
 pub const SS3: &str = "\x1bO";
@@ -42,30 +45,6 @@ use winapi::um::wincon::{
     WINDOW_BUFFER_SIZE_EVENT, WINDOW_BUFFER_SIZE_RECORD,
 };
 
-bitflags! {
-    #[cfg_attr(feature="use_serde", derive(Serialize, Deserialize))]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct Modifiers: u16 {
-        const NONE = 0;
-        const SHIFT = 1<<1;
-        const ALT = 1<<2;
-        const CTRL = 1<<3;
-        const SUPER = 1<<4;
-        const LEFT_ALT = 1<<5;
-        const RIGHT_ALT = 1<<6;
-        /// This is a virtual modifier used by wezterm
-        const LEADER = 1<<7;
-        const LEFT_CTRL = 1<<8;
-        const RIGHT_CTRL = 1<<9;
-        const LEFT_SHIFT = 1<<10;
-        const RIGHT_SHIFT = 1<<11;
-        const ENHANCED_KEY = 1<<12;
-        /// Not really a modifier, but a keyboard driver state
-        const CAPS_LOCK = 1<<13;
-        /// Not really a modifier, but a keyboard driver state
-        const NUM_LOCK = 1<<14;
-    }
-}
 bitflags! {
     #[cfg_attr(feature="use_serde", derive(Serialize, Deserialize))]
     #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -426,8 +405,8 @@ impl KeyCode {
                     DownArrow => (false, 'B'),
                     RightArrow => (false, 'C'),
                     LeftArrow => (false, 'D'),
-                    Home => (false, 'H'),
-                    End => (false, 'F'),
+                    KeyPadHome | Home => (false, 'H'),
+                    End | KeyPadEnd => (false, 'F'),
                     ApplicationUpArrow => (true, 'A'),
                     ApplicationDownArrow => (true, 'B'),
                     ApplicationRightArrow => (true, 'C'),
@@ -454,7 +433,7 @@ impl KeyCode {
                     || mods.contains(Modifiers::SHIFT)
                     || mods.contains(Modifiers::CTRL)
                 {
-                    write!(buf, "{}1;{}{}", CSI, 1 + encode_modifiers(mods), c)?;
+                    write!(buf, "{}1;{}{}", CSI, 1 + mods.encode_xterm(), c)?;
                 } else {
                     write!(buf, "{}{}", csi_or_ss3, c)?;
                 }
@@ -464,8 +443,8 @@ impl KeyCode {
                 let c = match key {
                     Insert => 2,
                     Delete => 3,
-                    PageUp => 5,
-                    PageDown => 6,
+                    KeyPadPageUp | PageUp => 5,
+                    KeyPadPageDown | PageDown => 6,
                     _ => unreachable!(),
                 };
 
@@ -473,7 +452,7 @@ impl KeyCode {
                     || mods.contains(Modifiers::SHIFT)
                     || mods.contains(Modifiers::CTRL)
                 {
-                    write!(buf, "\x1b[{};{}~", c, 1 + encode_modifiers(mods))?;
+                    write!(buf, "\x1b[{};{}~", c, 1 + mods.encode_xterm())?;
                 } else {
                     write!(buf, "\x1b[{}~", c)?;
                 }
@@ -502,7 +481,7 @@ impl KeyCode {
                         4 => 'S',
                         _ => unreachable!("wat?"),
                     };
-                    write!(buf, "\x1b[1;{}{code}", 1 + encode_modifiers(mods))?;
+                    write!(buf, "\x1b[1;{}{code}", 1 + mods.encode_xterm())?;
                 } else {
                     // Higher numbered F-keys using CSI instead of SS3.
                     let intro = match n {
@@ -520,7 +499,7 @@ impl KeyCode {
                         12 => "\x1b[24",
                         _ => bail!("unhandled fkey number {}", n),
                     };
-                    let encoded_mods = encode_modifiers(mods);
+                    let encoded_mods = mods.encode_xterm();
                     if encoded_mods == 0 {
                         // If no modifiers are held, don't send the modifier
                         // sequence, as the modifier encoding is a CSI-u extension.
@@ -540,7 +519,7 @@ impl KeyCode {
                     _ => unreachable!(),
                 };
 
-                let encoded_mods = encode_modifiers(mods);
+                let encoded_mods = mods.encode_xterm();
                 if encoded_mods == 0 {
                     // If no modifiers are held, don't send the modifier
                     // sequence, as the modifier encoding is a CSI-u extension.
@@ -555,19 +534,19 @@ impl KeyCode {
                     Numpad1 => "F",
                     Numpad2 => "B",
                     Numpad4 => "D",
-                    Numpad5 => "E",
+                    KeyPadBegin | Numpad5 => "E",
                     Numpad6 => "C",
                     Numpad7 => "H",
                     Numpad8 => "A",
                     _ => unreachable!(),
                 };
 
-                let encoded_mods = encode_modifiers(mods);
+                let encoded_mods = mods.encode_xterm();
                 if encoded_mods == 0 {
                     // If no modifiers are held, don't send the modifier
                     write!(buf, "{}{}", CSI, c)?;
                 } else {
-                    write!(buf, "{}1;{}{}", CSI, 1 + encode_modifiers(mods), c)?;
+                    write!(buf, "{}1;{}{}", CSI, 1 + encoded_mods, c)?;
                 }
             }
 
@@ -588,20 +567,6 @@ impl KeyCode {
     }
 }
 
-fn encode_modifiers(mods: Modifiers) -> u8 {
-    let mut number = 0;
-    if mods.contains(Modifiers::SHIFT) {
-        number |= 1;
-    }
-    if mods.contains(Modifiers::ALT) {
-        number |= 2;
-    }
-    if mods.contains(Modifiers::CTRL) {
-        number |= 4;
-    }
-    number
-}
-
 /// characters that when masked for CTRL could be an ascii control character
 /// or could be a key that a user legitimately wants to process in their
 /// terminal application
@@ -610,56 +575,6 @@ fn is_ambiguous_ascii_ctrl(c: char) -> bool {
         'i' | 'I' | 'm' | 'M' | '[' | '{' | '@' => true,
         _ => false,
     }
-}
-
-/// Map c to its Ctrl equivalent.
-/// In theory, this mapping is simply translating alpha characters
-/// to upper case and then masking them by 0x1f, but xterm inherits
-/// some built-in translation from legacy X11 so that are some
-/// aliased mappings and a couple that might be technically tied
-/// to US keyboard layout (particularly the punctuation characters
-/// produced in combination with SHIFT) that may not be 100%
-/// the right thing to do here for users with non-US layouts.
-fn ctrl_mapping(c: char) -> Option<char> {
-    // Please also sync with the copy of this function that
-    // lives in wezterm-input-types :-/
-    // FIXME: move this to wezterm-input-types and take a dep on it?
-    Some(match c {
-        '@' | '`' | ' ' | '2' => '\x00',
-        'A' | 'a' => '\x01',
-        'B' | 'b' => '\x02',
-        'C' | 'c' => '\x03',
-        'D' | 'd' => '\x04',
-        'E' | 'e' => '\x05',
-        'F' | 'f' => '\x06',
-        'G' | 'g' => '\x07',
-        'H' | 'h' => '\x08',
-        'I' | 'i' => '\x09',
-        'J' | 'j' => '\x0a',
-        'K' | 'k' => '\x0b',
-        'L' | 'l' => '\x0c',
-        'M' | 'm' => '\x0d',
-        'N' | 'n' => '\x0e',
-        'O' | 'o' => '\x0f',
-        'P' | 'p' => '\x10',
-        'Q' | 'q' => '\x11',
-        'R' | 'r' => '\x12',
-        'S' | 's' => '\x13',
-        'T' | 't' => '\x14',
-        'U' | 'u' => '\x15',
-        'V' | 'v' => '\x16',
-        'W' | 'w' => '\x17',
-        'X' | 'x' => '\x18',
-        'Y' | 'y' => '\x19',
-        'Z' | 'z' => '\x1a',
-        '[' | '3' | '{' => '\x1b',
-        '\\' | '4' | '|' => '\x1c',
-        ']' | '5' | '}' => '\x1d',
-        '^' | '6' | '~' => '\x1e',
-        '_' | '7' | '/' => '\x1f',
-        '8' | '?' => '\x7f', // `Delete`
-        _ => return None,
-    })
 }
 
 fn is_ascii(c: char) -> bool {
@@ -673,7 +588,7 @@ fn csi_u_encode(
     modes: &KeyCodeEncodeModes,
 ) -> Result<()> {
     if modes.encoding == KeyboardEncoding::CsiU && is_ascii(c) {
-        write!(buf, "\x1b[{};{}u", c as u32, 1 + encode_modifiers(mods))?;
+        write!(buf, "\x1b[{};{}u", c as u32, 1 + mods.encode_xterm())?;
         return Ok(());
     }
 
@@ -683,7 +598,7 @@ fn csi_u_encode(
             // Exclude well-known keys from modifyOtherKeys mode 1
         }
         (c, Some(_)) => {
-            write!(buf, "\x1b[27;{};{}~", 1 + encode_modifiers(mods), c as u32)?;
+            write!(buf, "\x1b[27;{};{}~", 1 + mods.encode_xterm(), c as u32)?;
             return Ok(());
         }
         _ => {}

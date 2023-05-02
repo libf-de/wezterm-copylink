@@ -5,10 +5,14 @@ use ::window::bitmaps::atlas::{Atlas, OutOfTextureSpace, Sprite};
 use ::window::bitmaps::{BitmapImage, Image, ImageTexture, Texture2d};
 use ::window::color::SrgbaPixel;
 use ::window::{Point, Rect};
+use anyhow::Context;
 use config::{AllowSquareGlyphOverflow, TextStyle};
 use euclid::num::Zero;
 use image::io::Limits;
-use image::{AnimationDecoder, Frame, Frames, ImageDecoder, ImageFormat, ImageResult};
+use image::{
+    AnimationDecoder, ColorType, DynamicImage, Frame, Frames, ImageDecoder, ImageFormat,
+    ImageResult,
+};
 use lfucache::LfuCache;
 use once_cell::sync::Lazy;
 use ordered_float::NotNan;
@@ -213,8 +217,10 @@ impl FrameDecoder {
     pub fn start(lease: BlobLease) -> anyhow::Result<Receiver<DecodedFrame>> {
         let (tx, rx) = sync_channel(2);
 
-        let buf_reader = lease.get_reader()?;
-        let reader = image::io::Reader::new(buf_reader).with_guessed_format()?;
+        let buf_reader = lease.get_reader().context("lease.get_reader()")?;
+        let reader = image::io::Reader::new(buf_reader)
+            .with_guessed_format()
+            .context("guess format from lease")?;
         let format = reader
             .format()
             .ok_or_else(|| anyhow::anyhow!("cannot determine image format"))?;
@@ -243,25 +249,47 @@ impl FrameDecoder {
         let mut frames = match format {
             ImageFormat::Gif => {
                 let mut reader = reader.into_inner();
-                reader.rewind()?;
-                let decoder = image::codecs::gif::GifDecoder::with_limits(reader, limits)?;
+                reader.rewind().context("rewinding reader for gif")?;
+                let decoder = image::codecs::gif::GifDecoder::with_limits(reader, limits)
+                    .context("GifDecoder::with_limits")?;
                 decoder.into_frames()
             }
             ImageFormat::Png => {
                 let mut reader = reader.into_inner();
-                reader.rewind()?;
-                let decoder = image::codecs::png::PngDecoder::with_limits(reader, limits.clone())?;
+                reader.rewind().context("rewinding reader for png")?;
+                let decoder = image::codecs::png::PngDecoder::with_limits(reader, limits.clone())
+                    .context("PngDecoder::with_limits")?;
                 if decoder.is_apng() {
                     decoder.apng().into_frames()
                 } else {
                     let size = decoder.total_bytes() as usize;
                     let mut buf = vec![0u8; size];
                     let (width, height) = decoder.dimensions();
-                    let mut reader = decoder.into_reader()?;
+                    let color_type = decoder.color_type();
+                    let mut reader = decoder.into_reader().context("PngDecoder into_reader")?;
                     reader.read(&mut buf)?;
-                    let buf = image::RgbaImage::from_raw(width, height, buf).ok_or_else(|| {
-                        anyhow::anyhow!("inconsistent {width}x{height} -> {size}")
-                    })?;
+
+                    let buf: image::RgbaImage = match color_type {
+                        ColorType::Rgb8 => DynamicImage::ImageRgb8(
+                            image::RgbImage::from_raw(width, height, buf).ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "PNG {color_type:?} {size} / {width}x{height} = {} \
+                                    bytes per pixel",
+                                    size / (width * height) as usize
+                                )
+                            })?,
+                        )
+                        .into_rgba8(),
+                        ColorType::Rgba8 => image::RgbaImage::from_raw(width, height, buf)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "PNG {color_type:?} {size} / {width}x{height} = {} \
+                                    bytes per pixel",
+                                    size / (width * height) as usize
+                                )
+                            })?,
+                        _ => anyhow::bail!("unimplemented PNG conversion from {color_type:?}"),
+                    };
                     let delay = image::Delay::from_numer_denom_ms(u32::MAX, 1);
                     let frame = Frame::from_parts(buf, 0, 0, delay);
                     Frames::new(Box::new(std::iter::once(ImageResult::Ok(frame))))
@@ -269,13 +297,16 @@ impl FrameDecoder {
             }
             ImageFormat::WebP => {
                 let mut reader = reader.into_inner();
-                reader.rewind()?;
-                let mut decoder = image::codecs::webp::WebPDecoder::new(reader)?;
-                decoder.set_limits(limits)?;
+                reader.rewind().context("rewinding reader for WebP")?;
+                let mut decoder =
+                    image::codecs::webp::WebPDecoder::new(reader).context("WebPDecoder")?;
+                decoder
+                    .set_limits(limits)
+                    .context("WebPDecoder::set_limits")?;
                 decoder.into_frames()
             }
             _ => {
-                let buf = reader.decode()?;
+                let buf = reader.decode().context("decode image")?;
                 let delay = image::Delay::from_numer_denom_ms(u32::MAX, 1);
                 let frame = Frame::from_parts(buf.into_rgba8(), 0, 0, delay);
                 Frames::new(Box::new(std::iter::once(ImageResult::Ok(frame))))
@@ -286,10 +317,11 @@ impl FrameDecoder {
             .next()
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "Image format is not fully supported by \
+                    "Unable to decode image data. Either it is corrupt, or \
+                    the Image format is not fully supported by \
                     https://github.com/image-rs/image/blob/master/README.md#supported-image-formats")
             })?;
-        let frame = frame?;
+        let frame = frame.context("first frame result")?;
 
         let mut decoded_frames = vec![];
         let (width, height) = frame.buffer().dimensions();
@@ -300,14 +332,15 @@ impl FrameDecoder {
         log::debug!("first frame took {:?} to decode.", start.elapsed());
 
         let data = frame.into_buffer().into_raw();
-        let lease = BlobManager::store(&data)?;
+        let lease = BlobManager::store(&data).context("BlobManager::store")?;
         let decoded_frame = DecodedFrame {
             lease,
             duration,
             width,
             height,
         };
-        tx.send(decoded_frame.clone())?;
+        tx.send(decoded_frame.clone())
+            .context("sending first frame")?;
         decoded_frames.push(decoded_frame);
 
         while let Some(frame) = frames.next() {
@@ -315,7 +348,7 @@ impl FrameDecoder {
 
             let duration: Duration = frame.delay().into();
             let data = frame.into_buffer().into_raw();
-            let lease = BlobManager::store(&data)?;
+            let lease = BlobManager::store(&data).context("BlobManager::store")?;
 
             let decoded_frame = DecodedFrame {
                 lease,
@@ -323,7 +356,7 @@ impl FrameDecoder {
                 width,
                 height,
             };
-            tx.send(decoded_frame.clone())?;
+            tx.send(decoded_frame.clone()).context("sending a frame")?;
             decoded_frames.push(decoded_frame);
         }
 
@@ -354,15 +387,22 @@ struct FrameState {
 
 impl FrameState {
     fn new(rx: Receiver<DecodedFrame>) -> Self {
-        static EMPTY: Lazy<BlobLease> = Lazy::new(|| BlobManager::store(&[0u8; 4]).unwrap());
+        const BLACK_SIZE: usize = 8;
+        static BLACK: Lazy<BlobLease> = Lazy::new(|| {
+            let mut data = vec![];
+            for _ in 0..BLACK_SIZE * BLACK_SIZE {
+                data.extend_from_slice(&[0, 0, 0, 0xff]);
+            }
+            BlobManager::store(&data).unwrap()
+        });
 
         Self {
             source: FrameSource::Decoder(rx),
             frames: vec![],
             current_frame: DecodedFrame {
-                lease: EMPTY.clone(),
-                width: 1,
-                height: 1,
+                lease: BLACK.clone(),
+                width: BLACK_SIZE,
+                height: BLACK_SIZE,
                 duration: Duration::from_millis(0),
             },
         }
@@ -380,7 +420,7 @@ impl FrameState {
                 Err(TryRecvError::Disconnected) => {
                     self.source = FrameSource::FrameIndex(0);
                     if self.frames.is_empty() {
-                        log::warn!("decoder thread terminated");
+                        log::warn!("image decoder thread terminated");
                         self.current_frame.duration = Duration::from_secs(86400);
                         self.frames.push(self.current_frame.clone());
                         false
@@ -431,8 +471,7 @@ pub struct DecodedImage {
 
 impl DecodedImage {
     fn placeholder() -> Self {
-        // A single black pixel
-        let image = ImageData::with_data(ImageDataType::new_single_frame(1, 1, vec![0, 0, 0, 0]));
+        let image = ImageData::with_data(ImageDataType::placeholder());
         Self {
             frame_start: RefCell::new(Instant::now()),
             current_frame: RefCell::new(0),

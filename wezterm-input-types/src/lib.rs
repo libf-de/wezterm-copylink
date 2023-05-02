@@ -1,4 +1,5 @@
 use bitflags::*;
+#[cfg(feature = "serde")]
 use serde::*;
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -16,19 +17,8 @@ pub type ScreenPoint = euclid::Point2D<isize, ScreenPixelUnit>;
 /// Which key is pressed.  Not all of these are probable to appear
 /// on most systems.  A lot of this list is @wez trawling docs and
 /// making an entry for things that might be possible in this first pass.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    Deserialize,
-    Serialize,
-    Ord,
-    PartialOrd,
-    FromDynamic,
-    ToDynamic,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, FromDynamic, ToDynamic)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum KeyCode {
     /// The decoded unicode character
     Char(char),
@@ -124,6 +114,7 @@ impl KeyCode {
     pub fn is_modifier(&self) -> bool {
         match self {
             Self::Hyper
+            | Self::CapsLock
             | Self::Super
             | Self::Meta
             | Self::Shift
@@ -462,7 +453,32 @@ impl ToString for KeyCode {
 }
 
 bitflags! {
-    #[derive(Default, Deserialize, Serialize, FromDynamic, ToDynamic)]
+    #[derive(Default, FromDynamic, ToDynamic)]
+    pub struct KeyboardLedStatus: u8 {
+        const CAPS_LOCK = 1<<1;
+        const NUM_LOCK = 1<<2;
+    }
+}
+
+impl ToString for KeyboardLedStatus {
+    fn to_string(&self) -> String {
+        let mut s = String::new();
+        if self.contains(Self::CAPS_LOCK) {
+            s.push_str("CAPS_LOCK");
+        }
+        if self.contains(Self::NUM_LOCK) {
+            if !s.is_empty() {
+                s.push('|');
+            }
+            s.push_str("NUM_LOCK");
+        }
+        s
+    }
+}
+
+bitflags! {
+    #[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
+    #[derive(Default, FromDynamic, ToDynamic)]
     #[dynamic(into="String", try_from="String")]
     pub struct Modifiers: u16 {
         const NONE = 0;
@@ -479,10 +495,6 @@ bitflags! {
         const LEFT_SHIFT = 1<<10;
         const RIGHT_SHIFT = 1<<11;
         const ENHANCED_KEY = 1<<12;
-        /// Not really a modifier, but a keyboard driver state
-        const CAPS_LOCK = 1<<13;
-        /// Not really a modifier, but a keyboard driver state
-        const NUM_LOCK = 1<<14;
     }
 }
 
@@ -532,6 +544,20 @@ pub struct ModifierToStringArgs<'a> {
 }
 
 impl Modifiers {
+    pub fn encode_xterm(self) -> u8 {
+        let mut number = 0;
+        if self.contains(Self::SHIFT) {
+            number |= 1;
+        }
+        if self.contains(Self::ALT) {
+            number |= 2;
+        }
+        if self.contains(Self::CTRL) {
+            number |= 4;
+        }
+        number
+    }
+
     pub fn to_string_with_separator(&self, args: ModifierToStringArgs) -> String {
         let mut s = String::new();
         if args.want_none && *self == Self::NONE {
@@ -635,24 +661,6 @@ impl Modifiers {
                 "ENHANCED_KEY",
                 "ENHANCED_KEY",
             ),
-            (
-                Self::CAPS_LOCK,
-                "CAPS_LOCK",
-                "CAPS_LOCK",
-                "CAPS_LOCK",
-                "CAPS_LOCK",
-                "CAPS_LOCK",
-                "CAPS_LOCK",
-            ),
-            (
-                Self::NUM_LOCK,
-                "NUM_LOCK",
-                "NUM_LOCK",
-                "NUM_LOCK",
-                "NUM_LOCK",
-                "NUM_LOCK",
-                "NUM_LOCK",
-            ),
         ] {
             if !self.contains(value) {
                 continue;
@@ -698,29 +706,12 @@ impl Modifiers {
             | Self::RIGHT_SHIFT
             | Self::ENHANCED_KEY)
     }
-
-    /// Remove status indicators that are not true modifiers
-    pub fn remove_keyboard_status_mods(self) -> Self {
-        self - (Self::CAPS_LOCK | Self::NUM_LOCK)
-    }
 }
 
 /// These keycodes identify keys based on their physical
 /// position on an ANSI-standard US keyboard.
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    Copy,
-    Ord,
-    PartialOrd,
-    FromDynamic,
-    ToDynamic,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy, Ord, PartialOrd, FromDynamic, ToDynamic)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum PhysKeyCode {
     A,
     B,
@@ -1216,6 +1207,7 @@ impl Eq for Handled {}
 pub struct RawKeyEvent {
     pub key: KeyCode,
     pub modifiers: Modifiers,
+    pub leds: KeyboardLedStatus,
 
     /// The physical location of the key on an ANSI-Standard US layout
     pub phys_code: Option<PhysKeyCode>,
@@ -1390,6 +1382,8 @@ pub struct KeyEvent {
     /// Which modifiers are down
     pub modifiers: Modifiers,
 
+    pub leds: KeyboardLedStatus,
+
     /// How many times this key repeats
     pub repeat_count: u16,
 
@@ -1398,12 +1392,13 @@ pub struct KeyEvent {
 
     /// If triggered from a raw key event, here it is.
     pub raw: Option<RawKeyEvent>,
+
+    #[cfg(windows)]
+    pub win32_uni_char: Option<char>,
 }
 
 fn normalize_shift(key: KeyCode, modifiers: Modifiers) -> (KeyCode, Modifiers) {
-    if modifiers.contains(Modifiers::SHIFT | Modifiers::CAPS_LOCK) {
-        (key, modifiers - (Modifiers::SHIFT | Modifiers::CAPS_LOCK))
-    } else if modifiers.contains(Modifiers::SHIFT) {
+    if modifiers.contains(Modifiers::SHIFT) {
         match key {
             KeyCode::Char(c) if c.is_ascii_uppercase() => (key, modifiers - Modifiers::SHIFT),
             KeyCode::Char(c) if c.is_ascii_lowercase() => (
@@ -1561,7 +1556,10 @@ impl KeyEvent {
         const LEFT_CTRL_PRESSED: usize = 0x08;
         const RIGHT_CTRL_PRESSED: usize = 0x04;
 
-        if self.modifiers.contains(Modifiers::SHIFT) {
+        if self
+            .modifiers
+            .intersects(Modifiers::SHIFT | Modifiers::LEFT_SHIFT | Modifiers::RIGHT_SHIFT)
+        {
             control_key_state |= SHIFT_PRESSED;
         }
 
@@ -1590,36 +1588,7 @@ impl KeyEvent {
         match &self.key {
             KeyCode::Composed(_) => None,
             KeyCode::Char(c) => {
-                let c = match *c {
-                    // Delete key is transmitted as 0x0
-                    '\x7f' => '\x00',
-                    // Backspace key is transmitted as 0x8, 0x7f or 0x0
-                    '\x08' => {
-                        if self.modifiers.contains(Modifiers::CTRL) {
-                            if self.modifiers.contains(Modifiers::ALT)
-                                || self.modifiers.contains(Modifiers::SHIFT)
-                            {
-                                '\x00'
-                            } else {
-                                '\x7f'
-                            }
-                        } else {
-                            '\x08'
-                        }
-                    }
-                    _ => *c,
-                };
-
-                let c = if self.modifiers.contains(Modifiers::CTRL) {
-                    // Ensure that we rewrite the unicode value to the ASCII CTRL
-                    // equivalent value.
-                    // <https://github.com/microsoft/terminal/issues/13134>
-                    ctrl_mapping(c).unwrap_or(c)
-                } else {
-                    c
-                };
-                let uni = c as u32;
-
+                let uni = self.win32_uni_char.unwrap_or(*c) as u32;
                 Some(format!(
                     "\u{1b}[{};{};{};{};{};{}_",
                     vkey, scan_code, uni, key_down, control_key_state, self.repeat_count
@@ -1648,28 +1617,36 @@ impl KeyEvent {
         {
             // Check for simple text generating keys
             match &self.key {
+                Char('\x08') => return '\x7f'.to_string(),
+                Char('\x7f') => return '\x08'.to_string(),
                 Char(c) => return c.to_string(),
                 _ => {}
             }
         }
 
+        let raw_modifiers = self
+            .raw
+            .as_ref()
+            .map(|raw| raw.modifiers)
+            .unwrap_or(self.modifiers);
+
         let mut modifiers = 0;
-        if self.modifiers.contains(Modifiers::SHIFT) {
+        if raw_modifiers.contains(Modifiers::SHIFT) {
             modifiers |= 1;
         }
-        if self.modifiers.contains(Modifiers::ALT) {
+        if raw_modifiers.contains(Modifiers::ALT) {
             modifiers |= 2;
         }
-        if self.modifiers.contains(Modifiers::CTRL) {
+        if raw_modifiers.contains(Modifiers::CTRL) {
             modifiers |= 4;
         }
-        if self.modifiers.contains(Modifiers::SUPER) {
+        if raw_modifiers.contains(Modifiers::SUPER) {
             modifiers |= 8;
         }
-        if self.modifiers.contains(Modifiers::CAPS_LOCK) {
+        if self.leds.contains(KeyboardLedStatus::CAPS_LOCK) {
             modifiers |= 64;
         }
-        if self.modifiers.contains(Modifiers::NUM_LOCK) {
+        if self.leds.contains(KeyboardLedStatus::NUM_LOCK) {
             modifiers |= 128;
         }
         modifiers += 1;
@@ -1686,24 +1663,26 @@ impl KeyEvent {
             _ => false,
         };
 
-        let generated_text = if flags.contains(KittyKeyboardFlags::REPORT_ASSOCIATED_TEXT) {
-            match &self.key {
-                Char(c) => format!(";{}", *c as u32),
-                Composed(s) => {
-                    let mut codepoints = ";".to_string();
-                    for c in s.chars() {
-                        if codepoints.len() > 1 {
-                            codepoints.push(':');
+        let generated_text =
+            if self.key_is_down && flags.contains(KittyKeyboardFlags::REPORT_ASSOCIATED_TEXT) {
+                match &self.key {
+                    Char(c) => format!(";{}", *c as u32),
+                    KeyCode::Numpad(n) => format!(";{}", '0' as u32 + *n as u32),
+                    Composed(s) => {
+                        let mut codepoints = ";".to_string();
+                        for c in s.chars() {
+                            if codepoints.len() > 1 {
+                                codepoints.push(':');
+                            }
+                            write!(&mut codepoints, "{}", c as u32).ok();
                         }
-                        write!(&mut codepoints, "{}", c as u32).ok();
+                        codepoints
                     }
-                    codepoints
+                    _ => String::new(),
                 }
-                _ => String::new(),
-            }
-        } else {
-            String::new()
-        };
+            } else {
+                String::new()
+            };
 
         let guess_phys = self
             .raw
@@ -1736,7 +1715,7 @@ impl KeyEvent {
         });
 
         if let Some(numpad) = is_numpad {
-            let code = match (numpad, self.modifiers.contains(Modifiers::NUM_LOCK)) {
+            let code = match (numpad, self.leds.contains(KeyboardLedStatus::NUM_LOCK)) {
                 (PhysKeyCode::Keypad0, true) => 57399,
                 (PhysKeyCode::Keypad0, false) => 57425,
                 (PhysKeyCode::Keypad1, true) => 57400,
@@ -1748,7 +1727,14 @@ impl KeyEvent {
                 (PhysKeyCode::Keypad4, true) => 57403,
                 (PhysKeyCode::Keypad4, false) => 57417,
                 (PhysKeyCode::Keypad5, true) => 57404,
-                (PhysKeyCode::Keypad5, false) => 57427,
+                (PhysKeyCode::Keypad5, false) => {
+                    let xt_mods = self.modifiers.encode_xterm();
+                    return if xt_mods == 0 && self.key_is_down {
+                        "\x1b[E".to_string()
+                    } else {
+                        format!("\x1b[1;{}{event_type}E", 1 + xt_mods)
+                    };
+                }
                 (PhysKeyCode::Keypad6, true) => 57405,
                 (PhysKeyCode::Keypad6, false) => 57418,
                 (PhysKeyCode::Keypad7, true) => 57406,
@@ -1784,6 +1770,12 @@ impl KeyEvent {
             }
             Char(shifted_key) => {
                 let mut use_legacy = false;
+                let shifted_key = if *shifted_key == '\x08' {
+                    // Backspace is really VERASE -> ASCII DEL
+                    '\x7f'
+                } else {
+                    *shifted_key
+                };
 
                 if !flags.contains(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS)
                     && event_type.is_empty()
@@ -1808,7 +1800,7 @@ impl KeyEvent {
                             self.modifiers,
                         );
                     } else {
-                        output.push(*shifted_key);
+                        output.push(shifted_key);
                     }
                     return output;
                 }
@@ -1816,7 +1808,7 @@ impl KeyEvent {
                 // FIXME: ideally we'd get the correct unshifted key from
                 // the OS based on the current keyboard layout. That needs
                 // more plumbing, so for now, we're assuming the US layout.
-                let c = us_layout_unshift(*shifted_key);
+                let c = us_layout_unshift(shifted_key);
 
                 let base_layout = self
                     .raw
@@ -1830,11 +1822,11 @@ impl KeyEvent {
                 let mut key_code = format!("{}", (c as u32));
 
                 if flags.contains(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS)
-                    && (c != *shifted_key || base_layout.is_some())
+                    && (c != shifted_key || base_layout.is_some())
                 {
                     key_code.push(':');
-                    if c != *shifted_key {
-                        key_code.push_str(&format!("{}", (*shifted_key as u32)));
+                    if c != shifted_key {
+                        key_code.push_str(&format!("{}", (shifted_key as u32)));
                     }
                     if let Some(base) = base_layout {
                         key_code.push_str(&format!(":{}", (base as u32)));
@@ -1881,18 +1873,16 @@ impl KeyEvent {
             }
 
             _ => {
-                if self.key.is_modifier()
-                    && !flags.contains(KittyKeyboardFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES)
-                {
-                    // Don't report bare modifier only key events unless
-                    // we're reporting all keys with escape codes
-                    String::new()
-                } else if let Some(code) =
-                    self.raw.as_ref().and_then(|raw| raw.kitty_function_code())
-                {
-                    format!("\x1b[{code};{modifiers}{event_type}{generated_text}u")
-                } else {
-                    String::new()
+                let code = self.raw.as_ref().and_then(|raw| raw.kitty_function_code());
+
+                match (
+                    code,
+                    flags.contains(KittyKeyboardFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES),
+                ) {
+                    (Some(code), true) => {
+                        format!("\x1b[{code};{modifiers}{event_type}{generated_text}u")
+                    }
+                    _ => String::new(),
                 }
             }
         }
@@ -1923,8 +1913,8 @@ pub struct KittyKeyboardFlags: u16 {
 }
 
 bitflags! {
-    #[derive(Deserialize, Serialize, FromDynamic, ToDynamic)]
-    #[serde(try_from = "String")]
+    #[derive(FromDynamic, ToDynamic)]
+    #[cfg_attr(feature="serde", derive(Serialize, Deserialize), serde(try_from = "String"))]
     #[dynamic(try_from = "String", into = "String")]
     pub struct WindowDecorations: u8 {
         const TITLE = 1;
@@ -2107,9 +2097,7 @@ fn us_layout_unshift(c: char) -> char {
 /// to US keyboard layout (particularly the punctuation characters
 /// produced in combination with SHIFT) that may not be 100%
 /// the right thing to do here for users with non-US layouts.
-fn ctrl_mapping(c: char) -> Option<char> {
-    // Please also sync with the copy of this function that
-    // lives in termwiz :-/
+pub fn ctrl_mapping(c: char) -> Option<char> {
     Some(match c {
         '@' | '`' | ' ' | '2' => '\x00',
         'A' | 'a' => '\x01',
@@ -2187,9 +2175,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('o'),
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "o".to_string()
@@ -2198,9 +2189,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('o'),
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: false,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\x1b[111;1:3u".to_string()
@@ -2218,9 +2212,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Function(1),
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\x1b[11;1~".to_string()
@@ -2229,9 +2226,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Function(1),
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: false,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\x1b[11;1:3~".to_string()
@@ -2246,9 +2246,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('i'),
                 modifiers: Modifiers::ALT | Modifiers::SHIFT,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\x1b[105;4u".to_string()
@@ -2257,9 +2260,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('I'),
                 modifiers: Modifiers::ALT | Modifiers::SHIFT,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\x1b[105;4u".to_string()
@@ -2269,9 +2275,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('1'),
                 modifiers: Modifiers::ALT | Modifiers::SHIFT,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\x1b[49;4u".to_string()
@@ -2282,14 +2291,131 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Char('!'),
                     modifiers: Modifiers::ALT | Modifiers::SHIFT,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 Some(PhysKeyCode::K1)
             )
             .encode_kitty(flags),
             "\x1b[49;4u".to_string()
+        );
+
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char('i'),
+                modifiers: Modifiers::SHIFT | Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            "\x1b[105;6u".to_string()
+        );
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char('I'),
+                modifiers: Modifiers::SHIFT | Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            "\x1b[105;6u".to_string()
+        );
+
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char('I'),
+                modifiers: Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: Some(RawKeyEvent {
+                    key: KeyCode::Char('I'),
+                    modifiers: Modifiers::SHIFT | Modifiers::CTRL,
+                    handled: Handled::new(),
+                    key_is_down: true,
+                    raw_code: 0,
+                    leds: KeyboardLedStatus::empty(),
+                    phys_code: Some(PhysKeyCode::I),
+                    #[cfg(windows)]
+                    scan_code: 0,
+                    repeat_count: 1,
+                }),
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            "\x1b[105;6u".to_string()
+        );
+
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char('i'),
+                modifiers: Modifiers::ALT | Modifiers::SHIFT | Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            "\x1b[105;8u".to_string()
+        );
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char('I'),
+                modifiers: Modifiers::ALT | Modifiers::SHIFT | Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            "\x1b[105;8u".to_string()
+        );
+
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char('\x08'),
+                modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            "\x7f".to_string()
+        );
+
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char('\x08'),
+                modifiers: Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            "\x1b[127;5u".to_string()
         );
     }
 
@@ -2304,9 +2430,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('A'),
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\u{1b}[97:65;1u".to_string()
@@ -2315,9 +2444,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('A'),
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: false,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\u{1b}[97:65;1:3u".to_string()
@@ -2333,6 +2465,7 @@ mod test {
         event.raw = Some(RawKeyEvent {
             key: event.key.clone(),
             modifiers: event.modifiers,
+            leds: KeyboardLedStatus::empty(),
             phys_code: phys,
             raw_code: 0,
             #[cfg(windows)]
@@ -2357,9 +2490,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::LeftShift,
                     modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2371,9 +2507,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::LeftShift,
                     modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: false,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2385,9 +2524,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::LeftControl,
                     modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2399,9 +2541,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::LeftControl,
                     modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: false,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2422,9 +2567,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Numpad(0),
                     modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2436,9 +2584,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Numpad(0),
                     modifiers: Modifiers::SHIFT,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2451,9 +2602,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Numpad(1),
                     modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2465,9 +2619,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Numpad(1),
                     modifiers: Modifiers::SHIFT,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 None
             )
@@ -2479,10 +2636,13 @@ mod test {
             make_event_with_raw(
                 KeyEvent {
                     key: KeyCode::Numpad(0),
-                    modifiers: Modifiers::NUM_LOCK,
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::NUM_LOCK,
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 Some(PhysKeyCode::Keypad0)
             )
@@ -2493,15 +2653,134 @@ mod test {
             make_event_with_raw(
                 KeyEvent {
                     key: KeyCode::Numpad(0),
-                    modifiers: Modifiers::NUM_LOCK | Modifiers::SHIFT,
+                    modifiers: Modifiers::SHIFT,
+                    leds: KeyboardLedStatus::NUM_LOCK,
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 Some(PhysKeyCode::Keypad0)
             )
             .encode_kitty(flags),
             "\u{1b}[57399;130u".to_string()
+        );
+
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::Numpad(5),
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::NUM_LOCK,
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::Keypad5)
+            )
+            .encode_kitty(flags),
+            "\u{1b}[57404;129u".to_string()
+        );
+
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::Numpad(5),
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::Keypad5)
+            )
+            .encode_kitty(flags),
+            "\u{1b}[E".to_string()
+        );
+    }
+
+    #[test]
+    fn encode_issue_3478_extra() {
+        let flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KittyKeyboardFlags::REPORT_EVENT_TYPES
+            | KittyKeyboardFlags::REPORT_ALTERNATE_KEYS
+            | KittyKeyboardFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            | KittyKeyboardFlags::REPORT_ASSOCIATED_TEXT;
+
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::Numpad(5),
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::NUM_LOCK,
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::Keypad5)
+            )
+            .encode_kitty(flags),
+            "\u{1b}[57404;129;53u".to_string()
+        );
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::Numpad(5),
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::NUM_LOCK,
+                    repeat_count: 1,
+                    key_is_down: false,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::Keypad5)
+            )
+            .encode_kitty(flags),
+            "\u{1b}[57404;129:3u".to_string()
+        );
+
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::Numpad(5),
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::Keypad5)
+            )
+            .encode_kitty(flags),
+            "\u{1b}[E".to_string()
+        );
+
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::Numpad(5),
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
+                    repeat_count: 1,
+                    key_is_down: false,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::Keypad5)
+            )
+            .encode_kitty(flags),
+            "\u{1b}[1;1:3E".to_string()
         );
     }
 
@@ -2513,9 +2792,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('"'),
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\"".to_string()
@@ -2525,9 +2807,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('"'),
                 modifiers: Modifiers::SHIFT,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "\"".to_string()
@@ -2537,9 +2822,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::Char('!'),
                 modifiers: Modifiers::SHIFT,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "!".to_string()
@@ -2549,9 +2837,12 @@ mod test {
             KeyEvent {
                 key: KeyCode::LeftShift,
                 modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::empty(),
                 repeat_count: 1,
                 key_is_down: true,
-                raw: None
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
             }
             .encode_kitty(flags),
             "".to_string()
@@ -2570,9 +2861,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Char('ф'),
                     modifiers: Modifiers::CTRL,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 Some(PhysKeyCode::A)
             )
@@ -2585,9 +2879,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Char('Ф'),
                     modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 Some(PhysKeyCode::A)
             )
@@ -2609,9 +2906,12 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Char('ф'),
                     modifiers: Modifiers::CTRL,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 Some(PhysKeyCode::A)
             )
@@ -2624,14 +2924,88 @@ mod test {
                 KeyEvent {
                     key: KeyCode::Char('Ф'),
                     modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+                    leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
-                    raw: None
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
                 },
                 Some(PhysKeyCode::A)
             )
             .encode_kitty(flags),
             "\x1b[1092:1060:97;6;1060u".to_string()
+        );
+    }
+
+    #[test]
+    fn encode_issue_3526() {
+        let flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES;
+
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char(' '),
+                modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::NUM_LOCK,
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            " ".to_string()
+        );
+
+        assert_eq!(
+            KeyEvent {
+                key: KeyCode::Char(' '),
+                modifiers: Modifiers::NONE,
+                leds: KeyboardLedStatus::CAPS_LOCK,
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            }
+            .encode_kitty(flags),
+            " ".to_string()
+        );
+
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::NumLock,
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::NumLock)
+            )
+            .encode_kitty(flags),
+            "".to_string()
+        );
+
+        assert_eq!(
+            make_event_with_raw(
+                KeyEvent {
+                    key: KeyCode::CapsLock,
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: None,
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                },
+                Some(PhysKeyCode::CapsLock)
+            )
+            .encode_kitty(flags),
+            "".to_string()
         );
     }
 }
